@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;STM32H743ZI_beta_80MHz_ads131/STM32H743ZI_beta_80MHz.ioc&apos; to &apos;STM32H743ZI_ads131_80MHz.ioc&apos;" description="Rename resource &apos;STM32H743ZI_beta_80MHz.ioc&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="STM32H743ZI_beta_80MHz.ioc" name="STM32H743ZI_ads131_80MHz.ioc" stamp="1630436914904" updateReferences="true"/>
+</session>

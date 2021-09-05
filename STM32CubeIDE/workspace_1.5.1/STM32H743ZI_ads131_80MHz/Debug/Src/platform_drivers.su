@@ -1,0 +1,8 @@
+platform_drivers.c:74:9:spi_init	0	static
+platform_drivers.c:283:9:spi_write_and_read	16	static
+platform_drivers.c:386:9:gpio_init	0	static
+platform_drivers.c:408:9:gpio_direction	0	static
+platform_drivers.c:438:9:gpio_set_value	0	static
+platform_drivers.c:468:9:gpio_get_value	0	static
+platform_drivers.c:492:6:mdelay	8	static
+platform_drivers.c:505:10:do_div	32	static
