@@ -1,0 +1,10 @@
+17:23:33 **** Incremental Build of configuration Debug for project STM32H743ZI_beta_80MHz ****
+make all 
+arm-none-eabi-size   STM32H743ZI_beta_80MHz.elf 
+   text	   data	    bss	    dec	    hex	filename
+  62520	   3564	  31328	  97412	  17c84	STM32H743ZI_beta_80MHz.elf
+Finished building: default.size.stdout
+ 
+
+17:23:33 Build Finished. 0 errors, 0 warnings. (took 359ms)
+
