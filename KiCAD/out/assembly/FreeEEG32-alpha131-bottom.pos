@@ -1,0 +1,54 @@
+### Module positions - created on Tue Oct 19 19:51:56 2021 ###
+### Printed by Pcbnew version 5.99.0-unknown-9c78e4cf54~131~ubuntu18.04.1
+## Unit = mm, Angle = deg.
+## Side : bottom
+# Ref     Val            Package                             PosX       PosY       Rot  Side
+C20       100n           C_0402_1005Metric                -3.0480    24.6380  -90.0000  bottom
+C21       100n           C_0402_1005Metric                 3.0480    23.1140   90.0000  bottom
+C25       100n           C_0402_1005Metric                 3.0480    25.1460  -90.0000  bottom
+C35       100n           C_0402_1005Metric                 9.5250    14.6050  -135.0000  bottom
+C36       100n           C_0402_1005Metric                15.6210    24.2570  -45.0000  bottom
+C41       100n           C_0402_1005Metric                 8.8392   -14.6558  135.0000  bottom
+C42       100n           C_0402_1005Metric                10.2108   -13.2842  -45.0000  bottom
+C43       100n           C_0402_1005Metric                 8.8900   -10.7950  -45.0000  bottom
+C44       100n           C_0402_1005Metric                13.2842    -7.7470  -135.0000  bottom
+C45       100n           C_0402_1005Metric                13.3604    -4.9276   45.0000  bottom
+C46       1u             C_0402_1005Metric                12.7000    -5.6388   45.0000  bottom
+C47       100n           C_0402_1005Metric                14.7320    -6.4262  -135.0000  bottom
+C48       1u             C_0402_1005Metric                14.0462    -7.1120  -135.0000  bottom
+C49       100n           C_0402_1005Metric                14.6050     6.9850   90.0000  bottom
+C50       100n           C_0402_1005Metric                 9.7790     9.3980  135.0000  bottom
+C51       4.7u           C_0603_1608Metric                 9.1440    10.5410  135.0000  bottom
+C52       100n           C_0402_1005Metric                 7.6200    11.4300  -45.0000  bottom
+C53       2.2u           C_0603_1608Metric                 6.3500    12.7000  135.0000  bottom
+C54       100n           C_0402_1005Metric                 5.0800    13.3350  135.0000  bottom
+C55       100n           C_0402_1005Metric                -6.9850    12.0650  135.0000  bottom
+C56       100n           C_0402_1005Metric               -11.4300     7.4930  135.0000  bottom
+C57       1u             C_0402_1005Metric               -12.1412     8.2042  135.0000  bottom
+C58       2.2u           C_0603_1608Metric               -13.4990     5.6511   45.0000  bottom
+C59       100n           C_0402_1005Metric               -14.3890     4.7621  -135.0000  bottom
+C60       100n           C_0402_1005Metric               -13.7160    -9.5250   45.0000  bottom
+C61       1u             C_0402_1005Metric               -14.5034   -10.3124   45.0000  bottom
+C62       100n           C_0402_1005Metric                -7.1120   -11.0998    0.0000  bottom
+C63       100n           C_0402_1005Metric                -6.7310   -15.7480  -45.0000  bottom
+C69       100n           C_0402_1005Metric                -8.8900    10.1460  -135.0000  bottom
+C70       10u            C_0603_1608Metric               -10.1600     8.9494  -135.0000  bottom
+C75       2.2u           C_0603_1608Metric               -12.6492   -11.6078  -135.0000  bottom
+D1        D_Schottky     D_SOD-123                        -9.5250    12.6813  135.0000  bottom
+D2        D_Schottky     D_SOD-123                       -12.7000     9.5063  -45.0000  bottom
+J99       USB_B_Micro    USB_Micro-B_Molex-105017-0001    22.8600   -22.8600  135.0000  bottom
+R85       4k7            R_0402_1005Metric                10.4140     7.8740   45.0000  bottom
+R109      0              R_0402_1005Metric                -7.6200   -22.8600  -90.0000  bottom
+R110      0              R_0402_1005Metric               -22.8600     7.7470    0.0000  bottom
+R112      0              R_0402_1005Metric                22.8600     7.6200  180.0000  bottom
+R115      24             R_0402_1005Metric                12.4714   -10.8458  -135.0000  bottom
+R116      24             R_0402_1005Metric                13.7668    -9.6520  -135.0000  bottom
+T1        750315371      750315371                       -16.5100    16.5100  -135.0000  bottom
+U2        REF2025        SOT-23-5_HandSoldering            0.0000    24.1300  180.0000  bottom
+U8        LP5907         SOT-23-5                        -10.2108   -10.2108  135.0000  bottom
+U15       ISO7341c       SOIC-16W_7.5x10.3mm_P1.27mm      16.5100    16.5100  135.0000  bottom
+U17       ADuM3160       SOIC-16W_7.5x10.3mm_P1.27mm      16.5100   -16.5100   45.0000  bottom
+U18       STM32H743ZITx  LQFP-144_20x20mm_P0.5mm           0.0000     0.0000   45.0000  bottom
+U19       SN6505B        SOT-23-6_Handsoldering          -22.8600    22.8413   45.0000  bottom
+U21       473521001      473521001                       -18.3652   -18.3679  -135.0000  bottom
+## End
