@@ -80,8 +80,6 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define ADC2_DRDY_Pin GPIO_PIN_13
 #define ADC2_DRDY_GPIO_Port GPIOC
-#define ISO_USB_PIN_Pin GPIO_PIN_2
-#define ISO_USB_PIN_GPIO_Port GPIOF
 #define SPI5_NSS4_Pin GPIO_PIN_3
 #define SPI5_NSS4_GPIO_Port GPIOF
 #define SPI5_NSS3_Pin GPIO_PIN_4
@@ -92,6 +90,8 @@ void Error_Handler(void);
 #define SPI5_NSS_GPIO_Port GPIOF
 #define ADC3_DRDY_Pin GPIO_PIN_10
 #define ADC3_DRDY_GPIO_Port GPIOF
+#define ISO_USB_PIN_Pin GPIO_PIN_0
+#define ISO_USB_PIN_GPIO_Port GPIOC
 #define SPI2_NSS2_Pin GPIO_PIN_1
 #define SPI2_NSS2_GPIO_Port GPIOA
 #define SPI2_NSS3_Pin GPIO_PIN_2
@@ -135,8 +135,8 @@ void Error_Handler(void);
 #define SPI3_NSS3_GPIO_Port GPIOD
 #define SPI3_NSS4_Pin GPIO_PIN_3
 #define SPI3_NSS4_GPIO_Port GPIOD
-#define ADC1_SYNC_RESETT_Pin GPIO_PIN_4
-#define ADC1_SYNC_RESETT_GPIO_Port GPIOD
+#define ADC1_SYNC_RESET_Pin GPIO_PIN_4
+#define ADC1_SYNC_RESET_GPIO_Port GPIOD
 #define ACC_INT1_Pin GPIO_PIN_8
 #define ACC_INT1_GPIO_Port GPIOB
 #define ACC_SDO_SAO_Pin GPIO_PIN_9
@@ -146,8 +146,8 @@ void Error_Handler(void);
 #define AD_DRDY_Pin ADC1_DRDY_Pin
 #define AD_DRDY_GPIO_Port ADC1_DRDY_GPIO_Port
 
-#define SPI1_NSS_Pin GPIO_PIN_4
-#define SPI1_NSS_GPIO_Port GPIOA
+//#define SPI1_NSS_Pin GPIO_PIN_4
+//#define SPI1_NSS_GPIO_Port GPIOA
 
 #define DHCP_SOCKET     0
 #define DNS_SOCKET      1
@@ -157,14 +157,14 @@ void Error_Handler(void);
 #define W5500_CS_Pin SPI1_NSS_Pin
 
 
-#define SPI2_NSS_Pin GPIO_PIN_12
-#define SPI2_NSS_GPIO_Port GPIOB
-#define SPI3_NSS_Pin GPIO_PIN_10
-#define SPI3_NSS_GPIO_Port GPIOA
-#define SPI4_NSS_Pin GPIO_PIN_8
-#define SPI4_NSS_GPIO_Port GPIOG
-#define SPI6_NSS_Pin GPIO_PIN_11
-#define SPI6_NSS_GPIO_Port GPIOE
+//#define SPI2_NSS_Pin GPIO_PIN_12
+//#define SPI2_NSS_GPIO_Port GPIOB
+//#define SPI3_NSS_Pin GPIO_PIN_10
+//#define SPI3_NSS_GPIO_Port GPIOA
+//#define SPI4_NSS_Pin GPIO_PIN_8
+//#define SPI4_NSS_GPIO_Port GPIOG
+//#define SPI6_NSS_Pin GPIO_PIN_11
+//#define SPI6_NSS_GPIO_Port GPIOE
 
 #define FREESMARTEEG_OPENBCI                   (1LL<<0)
 #define FREESMARTEEG_PROCESSING                (1LL<<1)
@@ -233,15 +233,24 @@ void Error_Handler(void);
 #define FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT (1LL<<1)
 #define FREEEEG32_SAI_TEST_DUPLICATES_INT (1LL<<3)
 #define FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT (1LL<<4)
+#define FREEEEG32_ADS131M08_SPI_TEST_INT (1LL<<5)
+#define FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT (1LL<<6)
+#define FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT (1LL<<7)
+#define FREEEEG32_ADS131M08_SPI_TEST_REGISTERS_INT (1LL<<8)
 
-#define FREEEEG32_OUT (0)
+//#define FREEEEG32_OUT (0)
+
+//#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_TEST_INT
+//#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_TEST_REGISTERS_INT
+//#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT
+#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT
 
 //#define FREEEEG32_OUT FREEEEG32_SAI_SDCARD_TEXT_UART7_INT
 //#define FREEEEG32_OUT FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT
 //#define FREEEEG32_OUT FREEEEG32_SAI_TEST_DUPLICATES_INT
 //#define FREEEEG32_OUT FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT
 
-//#define FREESMARTEEG_OUT (0)
+#define FREESMARTEEG_OUT (0)
 
 //#define FREESMARTEEG_OUT FREESMARTEEG_CRC
 //#define FREESMARTEEG_OUT FREESMARTEEG_TEXT
@@ -310,7 +319,7 @@ void Error_Handler(void);
 
 
 //#define FREESMARTEEG_OUT FREESMARTEEG_SAI_TEXT_UART7_INT
-#define FREESMARTEEG_OUT FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT
+//#define FREESMARTEEG_OUT FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT
 
 
 
@@ -351,7 +360,9 @@ void Error_Handler(void);
 #define FREESMARTEEG_ADC_SAI_READ_TIMER_INT (1LL<<12)
 #define FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER (1LL<<13)
 #define FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER_CIPLV (1LL<<14)
+#define FREESMARTEEG_ADC_ADS131M08_SPI_READ_INT (1LL<<15)
 
+#define FREESMARTEEG_ADC FREESMARTEEG_ADC_ADS131M08_SPI_READ_INT
 
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_NONE
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SPI_READ
@@ -365,7 +376,7 @@ void Error_Handler(void);
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ_INT_TIMER
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ
 
-#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ_INT
+//#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ_INT
 
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ_INT_DMA
 //#define FREESMARTEEG_ADC FREESMARTEEG_ADC_SAI_READ_DMAMUX
@@ -403,11 +414,11 @@ void Error_Handler(void);
 #define UART_DMA (1)
 //#define UART_DMA (0)
 
-//#define SPI_DMA (1)
-#define SPI_DMA (0)
+#define SPI_DMA (1)
+//#define SPI_DMA (0)
 
-//#define SPI_NSS_SOFTWARE (1)
-#define SPI_NSS_SOFTWARE (0)
+#define SPI_NSS_SOFTWARE (1)
+//#define SPI_NSS_SOFTWARE (0)
 
 #define SAI_DMA (1)
 //#define SAI_DMA (0)
@@ -417,7 +428,8 @@ void Error_Handler(void);
 //#define uint8_ad_adc_number (1)
 //#define uint8_ad_adc_number (2)
 //#define uint8_ad_adc_number (3)
-#define uint8_ad_adc_number (4)
+//#define uint8_ad_adc_number (4)
+#define uint8_ad_adc_number (16)
 //#define uint8_ad_chan_number (1)
 //#define uint8_ad_chan_number (2)
 #define uint8_ad_chan_number (8)
