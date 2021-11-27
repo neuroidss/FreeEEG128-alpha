@@ -1,6 +1,6 @@
 # FreeEEG128-alpha
 
-![FreeEEG128-alpha_top](https://raw.githubusercontent.com/neuroidss/FreeEEG128-alpha/main/IMG20211127130429.jpgpng)
+![FreeEEG128-alpha_top](https://raw.githubusercontent.com/neuroidss/FreeEEG128-alpha/main/IMG20211127130429.jpg)
 
 ![FreeEEG128-alpha_bottom](https://raw.githubusercontent.com/neuroidss/FreeEEG128-alpha/main/IMG20211127130444.jpg)
 
