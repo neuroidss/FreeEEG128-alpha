@@ -4,14 +4,14 @@
  * @file    bsp_driver_sd.c for H7 (based on stm32h743i_eval_sd.c)
  * @brief   This file includes a generic uSD card driver.
  *          To be completed by the user according to the board used for the project.
- * @note    Functions generated as weak: they can be overriden by
+ * @note    Some functions generated as weak: they can be overriden by
  *          - code in user files
  *          - or BSP code from the FW pack files
  *          if such files are added to the generated project (by the user).
  ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
+  * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
   * All rights reserved.</center></h2>
   *
   * This software component is licensed by ST under Ultimate Liberty license
@@ -72,9 +72,9 @@ __weak uint8_t BSP_SD_Init(void)
   * @retval Returns 0
   */
 __weak uint8_t BSP_SD_ITConfig(void)
-{  
+{
   /* Code to be updated by the user or replaced by one from the FW pack (in a stmxxxx_sd.c file) */
-  
+
   return (uint8_t)0;
 }
 
@@ -258,6 +258,7 @@ void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
 /**
   * @brief BSP SD Abort callback
   * @retval None
+  * @note empty (up to the user to fill it in or to remove it if useless)
   */
 __weak void BSP_SD_AbortCallback(void)
 {
@@ -267,6 +268,7 @@ __weak void BSP_SD_AbortCallback(void)
 /**
   * @brief BSP Tx Transfer completed callback
   * @retval None
+  * @note empty (up to the user to fill it in or to remove it if useless)
   */
 __weak void BSP_SD_WriteCpltCallback(void)
 {
@@ -276,6 +278,7 @@ __weak void BSP_SD_WriteCpltCallback(void)
 /**
   * @brief BSP Rx Transfer completed callback
   * @retval None
+  * @note empty (up to the user to fill it in or to remove it if useless)
   */
 __weak void BSP_SD_ReadCpltCallback(void)
 {

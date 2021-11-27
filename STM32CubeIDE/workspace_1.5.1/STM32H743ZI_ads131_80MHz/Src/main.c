@@ -51,9 +51,11 @@
 #include <ctype.h>
 //#include "usbd_cdc_if.h"
 
+//#include "delay_micros.h"
 
-#include "ad7779.h"
-#include "platform_drivers.h"
+#include "ads131m0x.h"
+//#include "ad7779.h"
+//#include "platform_drivers.h"
 #include "string.h"
 //#include "W5500/dhcp.h"
 //#include "W5500/dns.h"
@@ -121,9 +123,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim8;
 DMA_HandleTypeDef hdma_tim1_trig;
 DMA_HandleTypeDef hdma_tim1_up;
-DMA_HandleTypeDef hdma_tim8_ch2;
 DMA_HandleTypeDef hdma_tim8_trig;
-DMA_HandleTypeDef hdma_tim8_ch1;
 
 UART_HandleTypeDef huart1;
 DMA_HandleTypeDef hdma_usart1_tx;
@@ -339,6 +339,20 @@ typedef struct OVData4 {
 } OVData4;
 DMA_BUFFER OVData4 ovdata4;
 
+typedef struct ADData24 {
+	  uint8_t b0;
+	  uint8_t b1;
+    uint8_t b2;
+	  uint8_t datas[8][3];
+    uint8_t b3;
+    uint8_t b4;
+    uint8_t b5;
+    uint8_t b6;
+    uint8_t b7;
+} ADData24;
+DMA_BUFFER ADData24 addata24;
+DMA_BUFFER ADData24 addata24s[4];
+
 #define datasBuffersize (4)
 
 //#define dataBuffer110size (2 + uint8_ad_chan_number * (3) * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1)
@@ -353,7 +367,8 @@ DMA_BUFFER uint8_t datasBuffer[datasBuffersize][uint8_ad_number];
 DMA_BUFFER uint8_t aTxBuffer[uint8_ad_number];
 DMA_BUFFER uint8_t aRxBuffer[uint8_ad_number];
 
-ad7779_dev *devices[uint8_ad_adc_number];
+ads131m0x_dev *devices[uint8_ad_adc_number];
+//ad7779_dev *devices[uint8_ad_adc_number];
 
 uint8_t ui8SampleNumber=-1;
 uint8_t ui8SampleNumber2=-1;
@@ -550,6 +565,9 @@ float frac_secs1;
 
 DMA_BUFFER char buff[256];
 
+bool flag_nDRDY_INTERRUPT = false;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -568,6 +586,7 @@ static void MX_I2C1_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_SDMMC1_SD_Init(void);
 static void MX_SPI5_Init(void);
+static void MX_NVIC_Init(void);
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 
@@ -591,6 +610,21 @@ void print_text_line(const char * t);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+///**
+// * @brief  This function provides a delay (in microseconds)
+// * @param  microseconds: delay in microseconds
+// */
+//__STATIC_INLINE void DWT_Delay_us(volatile uint32_t microseconds)
+//{
+//  uint32_t clk_cycle_start = DWT->CYCCNT;
+//
+//  /* Go to number of cycles for system */
+//  microseconds *= (HAL_RCC_GetHCLKFreq() / 1000000);
+//
+//  /* Delay till end */
+//  while ((DWT->CYCCNT - clk_cycle_start) < microseconds);
+//}
 
 int32_t interpret24bitAsInt32( uint8_t * byteBuffer)
 {
@@ -915,6 +949,12 @@ void print_hex(int v, int num_places)
         }
     }
 
+                if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+                {
+                    CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
+                }
+
+
     if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
     {
 
@@ -1231,6 +1271,12 @@ void print_symbol(uint8_t v)
       }
   }
 
+  if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+  {
+      CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
+  }
+
+
   if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
   {
 
@@ -1322,6 +1368,12 @@ void print_text(const char * t)
       }
   }
 
+  if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+  {
+      CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
+  }
+
+
   if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
   {
 
@@ -1412,6 +1464,12 @@ void print_line()
         Error_Handler();
       }
   }
+
+  if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+  {
+      CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
+  }
+
 
   if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
   {
@@ -2190,9 +2248,24 @@ int main(void)
   MX_I2C2_Init();
   MX_SDMMC1_SD_Init();
   MX_USB_DEVICE_Init();
-  MX_FATFS_Init();
   MX_SPI5_Init();
+  MX_FATFS_Init();
+
+  /* Initialize interrupts */
+  MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
+
+//  volatile uint32_t *DWT_CONTROL = (uint32_t *) 0xE0001000;
+//  volatile uint32_t *DWT_CYCCNT = (uint32_t *) 0xE0001004;
+//  volatile uint32_t *DEMCR = (uint32_t *) 0xE000EDFC;
+//  volatile uint32_t *LAR  = (uint32_t *) 0xE0001FB0;   // <-- added lock access register
+//
+//  *DEMCR = *DEMCR | 0x01000000;     // enable trace
+//  *LAR = 0xC5ACCE55;                // <-- added unlock access to DWT (ITM, etc.)registers
+//  *DWT_CYCCNT = 0;                  // clear DWT cycle counter
+//  *DWT_CONTROL = *DWT_CONTROL | 1;  // enable DWT cycle counter
+
+//  DWT_Init();
 
   if(FREEEEG32_OUT & FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT)
   {
@@ -2531,23 +2604,23 @@ int main(void)
 //        HAL_GPIO_WritePin(SPI2_NSS_AD4_GPIO_Port, SPI2_NSS_AD4_Pin, GPIO_PIN_SET);
 //    }
 
-    HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
-
-
-    //RESET
-    HAL_GPIO_WritePin(ADC1_RESET_GPIO_Port, ADC1_RESET_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC2_RESET_GPIO_Port, ADC2_RESET_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC3_RESET_GPIO_Port, ADC3_RESET_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(ADC4_RESET_GPIO_Port, ADC4_RESET_Pin, GPIO_PIN_RESET);
-    HAL_Delay(100);
-    HAL_GPIO_WritePin(ADC1_RESET_GPIO_Port, ADC1_RESET_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(ADC2_RESET_GPIO_Port, ADC2_RESET_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(ADC3_RESET_GPIO_Port, ADC3_RESET_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(ADC4_RESET_GPIO_Port, ADC4_RESET_Pin, GPIO_PIN_SET);
-    HAL_Delay(100);
+//    HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
+//
+//
+//    //RESET
+//    HAL_GPIO_WritePin(ADC1_RESET_GPIO_Port, ADC1_RESET_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC2_RESET_GPIO_Port, ADC2_RESET_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC3_RESET_GPIO_Port, ADC3_RESET_Pin, GPIO_PIN_RESET);
+//    HAL_GPIO_WritePin(ADC4_RESET_GPIO_Port, ADC4_RESET_Pin, GPIO_PIN_RESET);
+//    HAL_Delay(100);
+//    HAL_GPIO_WritePin(ADC1_RESET_GPIO_Port, ADC1_RESET_Pin, GPIO_PIN_SET);
+//    HAL_GPIO_WritePin(ADC2_RESET_GPIO_Port, ADC2_RESET_Pin, GPIO_PIN_SET);
+//    HAL_GPIO_WritePin(ADC3_RESET_GPIO_Port, ADC3_RESET_Pin, GPIO_PIN_SET);
+//    HAL_GPIO_WritePin(ADC4_RESET_GPIO_Port, ADC4_RESET_Pin, GPIO_PIN_SET);
+//    HAL_Delay(100);
 
 
 //    if(!(SPI_DMA))
@@ -2618,8 +2691,8 @@ int main(void)
   //  {
   //    ad7779_init_param init_params[uint8_ad_adc_number];
 //      ad7779_dev *devices[uint8_ad_adc_number];
-      ad7779_dev *device1;
-      ad7779_init_param init_param;
+      ads131m0x_dev *device1;
+      ads131m0x_init_param init_param;
       uint8_t i;
 
   //    init_param.spi_dev = &hspi1;
@@ -2627,21 +2700,21 @@ int main(void)
 //      init_param.spi_dev.dev = &hspi2;
   //    init_param.spi_dev.chip_select_port = AD_CS_GPIO_Port;
   //    init_param.spi_dev.chip_select_pin = AD_CS_Pin;
-      init_param.ctrl_mode = AD7779_SPI_CTRL;
+//      init_param.ctrl_mode = AD7779_SPI_CTRL;
 
-      init_param.spi_crc_en = AD7779_DISABLE;
+//      init_param.spi_crc_en = AD7779_DISABLE;
   //    init_param.spi_crc_en = AD7779_ENABLE;
 
-      if(FREESMARTEEG_OUT & FREESMARTEEG_TEXT)
-      {
-        init_param.spi_crc_en = AD7779_DISABLE;
-      }
-
-      for (i = AD7779_CH0; i <= AD7779_CH7; i++)
-      {
-//        init_param.state[i] = AD7779_DISABLE;
-        init_param.state[i] = AD7779_ENABLE;
-      }
+//      if(FREESMARTEEG_OUT & FREESMARTEEG_TEXT)
+//      {
+//        init_param.spi_crc_en = AD7779_DISABLE;
+//      }
+//
+//      for (i = AD7779_CH0; i <= AD7779_CH7; i++)
+//      {
+////        init_param.state[i] = AD7779_DISABLE;
+//        init_param.state[i] = AD7779_ENABLE;
+//      }
 //      init_param.state[0] = AD7779_DISABLE;
   //    init_param.state[1] = AD7779_DISABLE;
   //    init_param.state[2] = AD7779_DISABLE;
@@ -2652,16 +2725,16 @@ int main(void)
   //      init_param.state[4] = AD7779_ENABLE;
   //      init_param.state[1] = AD7779_ENABLE;
 
-      for (i = AD7779_CH0; i <= AD7779_CH7; i++) {
-//        init_param.gain[i] = AD7779_GAIN_1;
-  //      init_param.gain[i] = AD7779_GAIN_2;
-//        init_param.gain[i] = AD7779_GAIN_4;
-        init_param.gain[i] = AD7779_GAIN_8;
-      }
-
-      init_param.pwr_mode = AD7779_HIGH_RES;
-//  //    init_param.dec_rate_int = 0xfff;//hr 0.5001221 kHz
-      init_param.dec_rate_int = 0xfa0;//hr 0.512 kHz
+//      for (i = AD7779_CH0; i <= AD7779_CH7; i++) {
+////        init_param.gain[i] = AD7779_GAIN_1;
+//  //      init_param.gain[i] = AD7779_GAIN_2;
+////        init_param.gain[i] = AD7779_GAIN_4;
+//        init_param.gain[i] = AD7779_GAIN_8;
+//      }
+//
+//      init_param.pwr_mode = AD7779_HIGH_RES;
+////  //    init_param.dec_rate_int = 0xfff;//hr 0.5001221 kHz
+//      init_param.dec_rate_int = 0xfa0;//hr 0.512 kHz
 //      init_param.dec_rate_int = 0xc80;//hr 0.640 kHz
   //    init_param.dec_rate_int = 0xa00;//hr 0.800 kHz
 //      init_param.dec_rate_int = 0x800;//hr 1 kHz
@@ -2691,31 +2764,37 @@ int main(void)
 
   //    init_param.dec_rate_int = 0x20;//lp 64 kHz
 
-      init_param.dec_rate_dec = 0;
-  //    init_param.dec_rate_dec = 0xfff;
-
-      init_param.ref_type = AD7779_EXT_REF;
-//      init_param.ref_type = AD7779_INT_REF;
-
-  //    init_param.pwr_mode = AD7779_HIGH_RES;
-  //    init_param.pwr_mode = AD7779_LOW_PWR;
-
-      init_param.dclk_div = AD7779_DCLK_DIV_1;
-//      init_param.dclk_div = AD7779_DCLK_DIV_2;
-//      init_param.dclk_div = AD7779_DCLK_DIV_128;
-
-      for (i = AD7779_CH0; i <= AD7779_CH7; i++) {
-        init_param.sync_offset[i] = 0;
-        init_param.offset_corr[i] = 0;
-        init_param.gain_corr[i] = 0;
-      }
+//      init_param.dec_rate_dec = 0;
+//  //    init_param.dec_rate_dec = 0xfff;
+//
+//      init_param.ref_type = AD7779_EXT_REF;
+////      init_param.ref_type = AD7779_INT_REF;
+//
+//  //    init_param.pwr_mode = AD7779_HIGH_RES;
+//  //    init_param.pwr_mode = AD7779_LOW_PWR;
+//
+//      init_param.dclk_div = AD7779_DCLK_DIV_1;
+////      init_param.dclk_div = AD7779_DCLK_DIV_2;
+////      init_param.dclk_div = AD7779_DCLK_DIV_128;
+//
+//      for (i = AD7779_CH0; i <= AD7779_CH7; i++) {
+//        init_param.sync_offset[i] = 0;
+//        init_param.offset_corr[i] = 0;
+//        init_param.gain_corr[i] = 0;
+//      }
 
   //    init_param.spi_dev.dev = &hspi3;
 //      init_param.spi_dev.dev = &hspi2;
-      init_param.spi_dev.dev = &hspi6;
-//      init_param.spi_dev.dev = &hspi1;
-      init_param.spi_dev.chip_select_port = SPI6_NSS_GPIO_Port;
-      init_param.spi_dev.chip_select_pin = SPI6_NSS_Pin;
+      //      init_param.spi_dev.dev = &hspi1;
+      init_param.spi_dev.dev = &hspi5;
+      init_param.spi_dev.chip_select_port = SPI5_NSS_GPIO_Port;
+      init_param.spi_dev.chip_select_pin = SPI5_NSS_Pin;
+//      init_param.spi_dev.dev = &hspi4;
+//      init_param.spi_dev.chip_select_port = SPI4_NSS_GPIO_Port;
+//      init_param.spi_dev.chip_select_pin = SPI4_NSS_Pin;
+//      init_param.spi_dev.dev = &hspi2;
+//      init_param.spi_dev.chip_select_port = SPI2_NSS_GPIO_Port;
+//      init_param.spi_dev.chip_select_pin = SPI2_NSS_Pin;
 //      init_param.spi_dev.chip_select_port = SPI2_NSS_AD1_GPIO_Port;
 //      init_param.spi_dev.chip_select_pin = SPI2_NSS_AD1_Pin;
 //      init_param.spi_dev.chip_select_port = SPI2_NSS_AD1_GPIO_Port;
@@ -2800,14 +2879,22 @@ int main(void)
 
 //      print7_text_line(">>ad7779_setup(&device1, init_param);");
 
-      ad7779_setup(&device1, init_param);
+      ads131m0x_setup(&device1, init_param);
+      uint16_t response = InitADC(device1, true);
+
+//      print_line();
+//      print_binary(response, 8);          print_symbol(';');          print_symbol(';');
+//          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
+//      print_line();
+//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+//                  print7_symbol(';');
 
 //      print7_text_line("<<ad7779_setup(&device1, init_param);");
 
-      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
-      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
-      HAL_Delay(1);
-      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
+//      HAL_Delay(1);
+//      ad7779_spi_int_reg_write_mask(device1,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
 
       devices[0]=device1;
 
@@ -2815,16 +2902,16 @@ int main(void)
 
       if(uint8_ad_adc_number >= 2)
       {
-      ad7779_dev *device2;
-      ad7779_init_param init_param2 = init_param;
+    	  ads131m0x_dev *device2;
+    	  ads131m0x_init_param init_param2 = init_param;
 
   //    init_param2.spi_dev.dev = &hspi4;
-      init_param2.spi_dev.dev = &hspi3;
 //      init_param2.spi_dev.dev = &hspi3;
 //      init_param2.spi_dev.dev = &hspi2;
   //    init_param2.spi_dev.dev = &hspi1;
-      init_param2.spi_dev.chip_select_port = SPI3_NSS_GPIO_Port;
-      init_param2.spi_dev.chip_select_pin = SPI3_NSS_Pin;
+          init_param2.spi_dev.dev = &hspi2;
+      init_param2.spi_dev.chip_select_port = SPI2_NSS_GPIO_Port;
+      init_param2.spi_dev.chip_select_pin = SPI2_NSS_Pin;
 //      init_param2.spi_dev.chip_select_port = SPI2_NSS_AD2_GPIO_Port;
 //      init_param2.spi_dev.chip_select_pin = SPI2_NSS_AD2_Pin;
 //  //    init_param2.spi_dev.dev = &hspi3;
@@ -2838,29 +2925,30 @@ int main(void)
 
   //    HAL_GPIO_WritePin(init_param2.spi_dev.chip_select_port, init_param2.spi_dev.chip_select_pin, GPIO_PIN_SET);
 
-      ad7779_setup(&device2, init_param2);
+      ads131m0x_setup(&device2, init_param2);
+      InitADC(device2, false);
 
-      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
-      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
-      HAL_Delay(1);
-      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
+//      HAL_Delay(1);
+//      ad7779_spi_int_reg_write_mask(device2,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
 
       devices[1]=device2;
       }
 
       if(uint8_ad_adc_number >= 3)
       {
-      ad7779_dev *device3;
-      ad7779_init_param init_param3 = init_param;
+    	  ads131m0x_dev *device3;
+    	  ads131m0x_init_param init_param3 = init_param;
 
 //              init_param3.state[7] = AD7779_DISABLE;
 
   //    init_param3.spi_dev.dev = &hspi1;
-      init_param3.spi_dev.dev = &hspi2;
 //      init_param3.spi_dev.dev = &hspi3;
 //      init_param3.spi_dev.dev = &hspi4;
-      init_param3.spi_dev.chip_select_port = SPI2_NSS_GPIO_Port;
-      init_param3.spi_dev.chip_select_pin = SPI2_NSS_Pin;
+          init_param3.spi_dev.dev = &hspi4;
+      init_param3.spi_dev.chip_select_port = SPI4_NSS_GPIO_Port;
+      init_param3.spi_dev.chip_select_pin = SPI4_NSS_Pin;
 //      init_param3.spi_dev.chip_select_port = SPI2_NSS_AD3_GPIO_Port;
 //      init_param3.spi_dev.chip_select_pin = SPI2_NSS_AD3_Pin;
   //    init_param3.spi_dev.dev = &hspi3;
@@ -2881,27 +2969,30 @@ int main(void)
 
 //      init_param3.dec_rate_int = 0xfa0;//hr 0.512 kHz
 
-      ad7779_setup(&device3, init_param3);
+      ads131m0x_setup(&device3, init_param3);
+      InitADC(device3, false);
 
-      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
-      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
-      HAL_Delay(1);
-      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
+//      HAL_Delay(1);
+//      ad7779_spi_int_reg_write_mask(device3,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
 
       devices[2]=device3;
       }
 
       if(uint8_ad_adc_number >= 4)
       {
-      ad7779_dev *device4;
-      ad7779_init_param init_param4 = init_param;
+    	  ads131m0x_dev *device4;
+    	  ads131m0x_init_param init_param4 = init_param;
 
   //    init_param4.spi_dev.dev = &hspi2;
-      init_param4.spi_dev.dev = &hspi4;
 //      init_param4.spi_dev.dev = &hspi2;
   //    init_param4.spi_dev.dev = &hspi3;
-      init_param4.spi_dev.chip_select_port = SPI4_NSS_GPIO_Port;
-      init_param4.spi_dev.chip_select_pin = SPI4_NSS_Pin;
+          init_param4.spi_dev.dev = &hspi3;
+      init_param4.spi_dev.chip_select_port = SPI3_NSS3_GPIO_Port;
+      init_param4.spi_dev.chip_select_pin = SPI3_NSS3_Pin;
+//      init_param4.spi_dev.chip_select_port = SPI3_NSS_GPIO_Port;
+//      init_param4.spi_dev.chip_select_pin = SPI3_NSS_Pin;
 //      init_param4.spi_dev.chip_select_port = SPI2_NSS_AD4_GPIO_Port;
 //      init_param4.spi_dev.chip_select_pin = SPI2_NSS_AD4_Pin;
   //    init_param4.spi_dev.dev = &hspi1;
@@ -2918,14 +3009,124 @@ int main(void)
 
 //      init_param4.dec_rate_int = 0xfa0;//hr 0.512 kHz
 
-      ad7779_setup(&device4, init_param4);
+      ads131m0x_setup(&device4, init_param4);
+      InitADC(device4, false);
 
-      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
-      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
-      HAL_Delay(1);
-      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_SOURCE,AD7779_DISABLE);
+//      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_ENABLE);
+//      HAL_Delay(1);
+//      ad7779_spi_int_reg_write_mask(device4,AD7779_REG_SRC_UPDATE,AD7779_SRC_LOAD_UPDATE,AD7779_DISABLE);
 
       devices[3]=device4;
+
+	  ads131m0x_dev *device5;
+	  ads131m0x_init_param init_param5 = init_param;
+      init_param5.spi_dev.dev = &hspi3;
+      init_param5.spi_dev.chip_select_port = SPI5_NSS2_GPIO_Port;
+      init_param5.spi_dev.chip_select_pin = SPI5_NSS2_Pin;
+      ads131m0x_setup(&device5, init_param5);
+      InitADC(device5, false);
+      devices[4]=device5;
+
+	  ads131m0x_dev *device6;
+	  ads131m0x_init_param init_param6 = init_param;
+      init_param6.spi_dev.dev = &hspi3;
+      init_param6.spi_dev.chip_select_port = SPI2_NSS4_GPIO_Port;
+      init_param6.spi_dev.chip_select_pin = SPI2_NSS4_Pin;
+      ads131m0x_setup(&device6, init_param6);
+      InitADC(device6, false);
+      devices[5]=device6;
+
+	  ads131m0x_dev *device7;
+	  ads131m0x_init_param init_param7 = init_param;
+      init_param7.spi_dev.dev = &hspi3;
+      init_param7.spi_dev.chip_select_port = SPI4_NSS2_GPIO_Port;
+      init_param7.spi_dev.chip_select_pin = SPI4_NSS2_Pin;
+      ads131m0x_setup(&device7, init_param7);
+      InitADC(device7, false);
+      devices[6]=device7;
+
+	  ads131m0x_dev *device8;
+	  ads131m0x_init_param init_param8 = init_param;
+      init_param8.spi_dev.dev = &hspi3;
+      init_param8.spi_dev.chip_select_port = SPI3_NSS4_GPIO_Port;
+      init_param8.spi_dev.chip_select_pin = SPI3_NSS4_Pin;
+      ads131m0x_setup(&device8, init_param8);
+      InitADC(device8, false);
+      devices[7]=device8;
+
+	  ads131m0x_dev *device9;
+	  ads131m0x_init_param init_param9 = init_param;
+      init_param9.spi_dev.dev = &hspi3;
+      init_param9.spi_dev.chip_select_port = SPI5_NSS3_GPIO_Port;
+      init_param9.spi_dev.chip_select_pin = SPI5_NSS3_Pin;
+      ads131m0x_setup(&device9, init_param9);
+      InitADC(device9, false);
+      devices[8]=device9;
+
+	  ads131m0x_dev *device10;
+	  ads131m0x_init_param init_param10 = init_param;
+      init_param10.spi_dev.dev = &hspi3;
+      init_param10.spi_dev.chip_select_port = SPI2_NSS3_GPIO_Port;
+      init_param10.spi_dev.chip_select_pin = SPI2_NSS3_Pin;
+      ads131m0x_setup(&device10, init_param10);
+      InitADC(device10, false);
+      devices[9]=device10;
+
+	  ads131m0x_dev *device11;
+	  ads131m0x_init_param init_param11 = init_param;
+      init_param11.spi_dev.dev = &hspi3;
+      init_param11.spi_dev.chip_select_port = SPI4_NSS3_GPIO_Port;
+      init_param11.spi_dev.chip_select_pin = SPI4_NSS3_Pin;
+      ads131m0x_setup(&device11, init_param11);
+      InitADC(device11, false);
+      devices[10]=device11;
+
+	  ads131m0x_dev *device12;
+	  ads131m0x_init_param init_param12 = init_param;
+      init_param12.spi_dev.dev = &hspi3;
+      init_param12.spi_dev.chip_select_port = SPI3_NSS_GPIO_Port;
+      init_param12.spi_dev.chip_select_pin = SPI3_NSS_Pin;
+      ads131m0x_setup(&device12, init_param12);
+      InitADC(device12, false);
+      devices[11]=device12;
+
+	  ads131m0x_dev *device13;
+	  ads131m0x_init_param init_param13 = init_param;
+      init_param13.spi_dev.dev = &hspi3;
+      init_param13.spi_dev.chip_select_port = SPI5_NSS4_GPIO_Port;
+      init_param13.spi_dev.chip_select_pin = SPI5_NSS4_Pin;
+      ads131m0x_setup(&device13, init_param13);
+      InitADC(device13, false);
+      devices[12]=device13;
+
+	  ads131m0x_dev *device14;
+	  ads131m0x_init_param init_param14 = init_param;
+      init_param14.spi_dev.dev = &hspi3;
+      init_param14.spi_dev.chip_select_port = SPI2_NSS2_GPIO_Port;
+      init_param14.spi_dev.chip_select_pin = SPI2_NSS2_Pin;
+      ads131m0x_setup(&device14, init_param14);
+      InitADC(device14, false);
+      devices[13]=device14;
+
+	  ads131m0x_dev *device15;
+	  ads131m0x_init_param init_param15 = init_param;
+      init_param15.spi_dev.dev = &hspi3;
+      init_param15.spi_dev.chip_select_port = SPI4_NSS4_GPIO_Port;
+      init_param15.spi_dev.chip_select_pin = SPI4_NSS4_Pin;
+      ads131m0x_setup(&device15, init_param15);
+      InitADC(device15, false);
+      devices[14]=device15;
+
+	  ads131m0x_dev *device16;
+	  ads131m0x_init_param init_param16 = init_param;
+      init_param16.spi_dev.dev = &hspi3;
+      init_param16.spi_dev.chip_select_port = SPI3_NSS2_GPIO_Port;
+      init_param16.spi_dev.chip_select_pin = SPI3_NSS2_Pin;
+      ads131m0x_setup(&device16, init_param16);
+      InitADC(device16, false);
+      devices[15]=device16;
+
       }
 
   //    init_params[0]=init_param;
@@ -3320,217 +3521,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-      //  for(int ad_data_byte = 0; ad_data_byte < 100; ad_data_byte ++)
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ)
-      {
-          HAL_Delay(1);
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-          }
-      }
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ_INT)
-      {
-          HAL_Delay(1);
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-          }
-      }
-      if((FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_DMAMUX)
-    		  || (FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER)
-    		  || (FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT)
-    		  || (FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER)
-    		  || (FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER_CIPLV))
-      {
-          HAL_Delay(100);
-          {
-//              print7_text_line(">>AD7779_REG_DOUT_FORMAT");
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(0);//4 DOUTx lines
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(1);//2 DOUTx lines
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(2);//1 DOUTx lines
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);//1 DOUTx lines
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-//            print7_text_line("<<AD7779_REG_DOUT_FORMAT");
-//            print7_text_line(">>AD7779_REG_GENERAL_USER_CONFIG_3");
-            for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
-//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-//            	int ad_adc = 0;
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0);
-//                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(1) | AD7779_SPI_SYNC;
-                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-                HAL_Delay(100);
-            }
-//            print7_text_line("<<AD7779_REG_GENERAL_USER_CONFIG_3");
-          }
-      }
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_INT)
-      {
-          HAL_Delay(100);
-          {
-//              print7_text_line(">>AD7779_REG_DOUT_FORMAT");
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(0);//4 DOUTx lines
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(1);//2 DOUTx lines
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(2);//1 DOUTx lines
-//                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);//1 DOUTx lines
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-//            print7_text_line("<<AD7779_REG_DOUT_FORMAT");
-//            print7_text_line(">>AD7779_REG_GENERAL_USER_CONFIG_3");
-            for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
-//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-//            	int ad_adc = 0;
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0);
-//                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(1) | AD7779_SPI_SYNC;
-                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-                HAL_Delay(100);
-            }
-//            print7_text_line("<<AD7779_REG_GENERAL_USER_CONFIG_3");
-          }
-      }
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ)
-      {
-          HAL_Delay(1);
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) |
-                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-          }
-      }
-//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER)
+//      //  for(int ad_data_byte = 0; ad_data_byte < 100; ad_data_byte ++)
+//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ)
 //      {
 //          HAL_Delay(1);
 //          {
@@ -3547,11 +3539,16 @@ int main(void)
 //              {
 //              }
 //            }
+//          }
+//      }
+//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ_INT)
+//      {
+//          HAL_Delay(1);
+//          {
 //            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
 //            {
-//                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-//                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) |
-//                		AD7779_DOUT_DRIVE_STR(1) | AD7779_SPI_SYNC;
+//                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
+//                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
 //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
 ////                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
 //              {
@@ -3563,316 +3560,250 @@ int main(void)
 //            }
 //          }
 //      }
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_I2S_READ_INT)
-      {
-          HAL_Delay(1);
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) |
-                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-          }
-      }
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_I2S_READ)
-      {
-          HAL_Delay(1);
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_DOUT_FORMAT;
-                aTxBuffer[1] = AD7779_DOUT_FORMAT(3);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(1) |
-                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-          }
-      }
-
-      if(0)
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ)
-      {
-          HAL_Delay(1);
-//          aTxBuffer[0] = AD7779_REG_CH_CONFIG(0);
-//          aTxBuffer[1] = AD7779_CH_GAIN(3);
-//          aTxBuffer[1] = AD7779_DOUT_FORMAT(3)|AD7779_DCLK_CLK_DIV(7);
-        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-        //  HAL_SPI_Transmit(&hspi1, data, 2, 5000);
-    //      if(HAL_SPI_Receive_DMA(&hspi1, (uint8_t *)data, 2) != HAL_OK)
-    //      if(SPI_DMA)
-    //      {
-    //        if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data, 2) != HAL_OK)
-    //        {
-    //          Error_Handler();
-    //        }
-    //      }
-    //      else
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                if(ad_adc != 0)
-//                    if(ad_adc != 1)
-//              if(ad_adc != 2)
-                for(int ad_chan = 0; ad_chan < uint8_ad_chan_number; ad_chan ++)
-            {
-                aTxBuffer[0] = AD7779_REG_CH_CONFIG(ad_chan);
-                aTxBuffer[1] = AD7779_CH_GAIN(3);
-
-    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-    //          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
-
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-
-            }
-
-          }
-        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-      }
-      HAL_Delay(1);
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SPI_READ_INT)
-      {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
-            {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
-                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(3) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(3) |
-//                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-            }
-            HAL_Delay(1);
-              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//            	  if(ad_adc != 2)
-//                	  if(ad_adc != 1)
-              {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
-                aTxBuffer[1] = AD7779_SPI_SLAVE_MODE_EN;
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-                {
-                }
-              }
-
-//              HAL_Delay(1);
-//              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//  //                for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
+//
+//      if(0)
+//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ)
+//      {
+//          HAL_Delay(1);
+////          aTxBuffer[0] = AD7779_REG_CH_CONFIG(0);
+////          aTxBuffer[1] = AD7779_CH_GAIN(3);
+////          aTxBuffer[1] = AD7779_DOUT_FORMAT(3)|AD7779_DCLK_CLK_DIV(7);
+//        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+//        //  HAL_SPI_Transmit(&hspi1, data, 2, 5000);
+//    //      if(HAL_SPI_Receive_DMA(&hspi1, (uint8_t *)data, 2) != HAL_OK)
+//    //      if(SPI_DMA)
+//    //      {
+//    //        if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data, 2) != HAL_OK)
+//    //        {
+//    //          Error_Handler();
+//    //        }
+//    //      }
+//    //      else
+//          {
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                if(ad_adc != 0)
+////                    if(ad_adc != 1)
+////              if(ad_adc != 2)
+//                for(int ad_chan = 0; ad_chan < uint8_ad_chan_number; ad_chan ++)
+//            {
+//                aTxBuffer[0] = AD7779_REG_CH_CONFIG(ad_chan);
+//                aTxBuffer[1] = AD7779_CH_GAIN(3);
+//
+//    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+////                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
+//    //          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
 //              {
-//                  aTxBuffer[0] = AD7779_REG_CH_CONFIG(0);
-//                  aTxBuffer[1] = AD7779_GAIN_8;
-//  //                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(3) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//  //                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(3) |
-//  //                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
-//                  if(SPI_DMA)
-//                  {
-//                      if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-//                      {
-//                        Error_Handler();
-//                      }
-//                  } else {
-//                      HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-//                      if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
-//                      {
-//                        Error_Handler();
-//                      }
-//                      HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-//                  }
+//                Error_Handler();
+//              }
+//    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+//
+//            }
+//
+//          }
+//        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//      }
+//      HAL_Delay(1);
+//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SPI_READ_INT)
+//      {
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
+//            {
+//                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_2;
+//                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(1) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
+////                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(3) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
+////                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(3) |
+////                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
+//                if(SPI_DMA)
+//                {
+//                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                } else {
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//                }
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+//            }
+//            HAL_Delay(1);
+//              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////            	  if(ad_adc != 2)
+////                	  if(ad_adc != 1)
+//              {
+//                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
+//                aTxBuffer[1] = AD7779_SPI_SLAVE_MODE_EN;
+//
+//                if(SPI_DMA)
+//                {
+//                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                } else {
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//                }
+//
 //                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
 //                {
 //                }
 //              }
-      }
+//
+////              HAL_Delay(1);
+////              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////  //                for(int ad_adc = uint8_ad_adc_number-1; ad_adc >= 0; ad_adc --)
+////              {
+////                  aTxBuffer[0] = AD7779_REG_CH_CONFIG(0);
+////                  aTxBuffer[1] = AD7779_GAIN_8;
+////  //                aTxBuffer[1] = AD7779_SDO_DRIVE_STR(3) | AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
+////  //                aTxBuffer[1] = AD7771_FILTER_MODE | AD7779_SDO_DRIVE_STR(3) |
+////  //                		AD7779_DOUT_DRIVE_STR(0) | AD7779_SPI_SYNC;
+////                  if(SPI_DMA)
+////                  {
+////                      if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+////                      {
+////                        Error_Handler();
+////                      }
+////                  } else {
+////                      HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+////                      if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2, 5000) != HAL_OK)
+////                      {
+////                        Error_Handler();
+////                      }
+////                      HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
+////                  }
+////                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+////                {
+////                }
+////              }
+//      }
+//
+////          HAL_Delay(1);
+//          if(0)
+//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SPI_READ)
+//      {
+//          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
+//        //  HAL_SPI_Transmit(&hspi1, data, 2, 5000);
+//    //      if(HAL_SPI_Receive_DMA(&hspi1, (uint8_t *)data, 2) != HAL_OK)
+//    //      if(SPI_DMA)
+//    //      {
+//    //        if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data, 2) != HAL_OK)
+//    //        {
+//    //          Error_Handler();
+//    //        }
+//    //      }
+//    //      else
+//          {
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//            {
+//              aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//              aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
+//
+//    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//              if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+//    //          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
+//              {
+//                Error_Handler();
+//              }
+//    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+//
+//            }
+//
+//  ////          HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//  //          if(HAL_SPI_TransmitReceive_DMA(device1->spi_dev.dev, aTxBuffer, data1, 2) != HAL_OK)
+//  ////          if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, 2, 5000) != HAL_OK)
+//  //          {
+//  //            Error_Handler();
+//  //          }
+//  ////          HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//  //
+//  //          while (HAL_SPI_GetState(device1->spi_dev.dev) != HAL_SPI_STATE_READY)
+//  //          {
+//  //          }
+//  //
+//  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
+//  //
+//  ////          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//  //          if(HAL_SPI_TransmitReceive_DMA(device2->spi_dev.dev, aTxBuffer, data2, 2) != HAL_OK)
+//  ////          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
+//  //          {
+//  //            Error_Handler();
+//  //          }
+//  ////          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//  //
+//  //          while (HAL_SPI_GetState(device2->spi_dev.dev) != HAL_SPI_STATE_READY)
+//  //          {
+//  //          }
+//  //
+//  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
+//  //
+//  ////          HAL_GPIO_WritePin(device3->spi_dev.chip_select_port, device3->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//  //          if(HAL_SPI_TransmitReceive_DMA(device3->spi_dev.dev, aTxBuffer, data3, 2) != HAL_OK)
+//  ////          if(HAL_SPI_TransmitReceive(device3->spi_dev.dev, aTxBuffer, data3, 2, 5000) != HAL_OK)
+//  //          {
+//  //            Error_Handler();
+//  //          }
+//  ////          HAL_GPIO_WritePin(device3->spi_dev.chip_select_port, device3->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//  //
+//  //          while (HAL_SPI_GetState(device3->spi_dev.dev) != HAL_SPI_STATE_READY)
+//  //          {
+//  //          }
+//  //
+//  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
+//  //
+//  ////          HAL_GPIO_WritePin(device4->spi_dev.chip_select_port, device4->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//  //          if(HAL_SPI_TransmitReceive_DMA(device4->spi_dev.dev, aTxBuffer, data4, 2) != HAL_OK)
+//  ////          if(HAL_SPI_TransmitReceive(device4->spi_dev.dev, aTxBuffer, data4, 2, 5000) != HAL_OK)
+//  //          {
+//  //            Error_Handler();
+//  //          }
+//  ////          HAL_GPIO_WritePin(device4->spi_dev.chip_select_port, device4->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//  //
+//  //          while (HAL_SPI_GetState(device4->spi_dev.dev) != HAL_SPI_STATE_READY)
+//  //          {
+//  //          }
+//
+//          }
+//        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//      }
 
-//          HAL_Delay(1);
-          if(0)
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SPI_READ)
-      {
-          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
-        //  HAL_SPI_Transmit(&hspi1, data, 2, 5000);
-    //      if(HAL_SPI_Receive_DMA(&hspi1, (uint8_t *)data, 2) != HAL_OK)
-    //      if(SPI_DMA)
-    //      {
-    //        if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data, 2) != HAL_OK)
-    //        {
-    //          Error_Handler();
-    //        }
-    //      }
-    //      else
-          {
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-              aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-              aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
-
-    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-              if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-    //          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
-              {
-                Error_Handler();
-              }
-    //          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
-
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-
-            }
-
-  ////          HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-  //          if(HAL_SPI_TransmitReceive_DMA(device1->spi_dev.dev, aTxBuffer, data1, 2) != HAL_OK)
-  ////          if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, 2, 5000) != HAL_OK)
-  //          {
-  //            Error_Handler();
-  //          }
-  ////          HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_SET);
-  //
-  //          while (HAL_SPI_GetState(device1->spi_dev.dev) != HAL_SPI_STATE_READY)
-  //          {
-  //          }
-  //
-  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
-  //
-  ////          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-  //          if(HAL_SPI_TransmitReceive_DMA(device2->spi_dev.dev, aTxBuffer, data2, 2) != HAL_OK)
-  ////          if(HAL_SPI_TransmitReceive(device2->spi_dev.dev, aTxBuffer, data2, 2, 5000) != HAL_OK)
-  //          {
-  //            Error_Handler();
-  //          }
-  ////          HAL_GPIO_WritePin(device2->spi_dev.chip_select_port, device2->spi_dev.chip_select_pin, GPIO_PIN_SET);
-  //
-  //          while (HAL_SPI_GetState(device2->spi_dev.dev) != HAL_SPI_STATE_READY)
-  //          {
-  //          }
-  //
-  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
-  //
-  ////          HAL_GPIO_WritePin(device3->spi_dev.chip_select_port, device3->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-  //          if(HAL_SPI_TransmitReceive_DMA(device3->spi_dev.dev, aTxBuffer, data3, 2) != HAL_OK)
-  ////          if(HAL_SPI_TransmitReceive(device3->spi_dev.dev, aTxBuffer, data3, 2, 5000) != HAL_OK)
-  //          {
-  //            Error_Handler();
-  //          }
-  ////          HAL_GPIO_WritePin(device3->spi_dev.chip_select_port, device3->spi_dev.chip_select_pin, GPIO_PIN_SET);
-  //
-  //          while (HAL_SPI_GetState(device3->spi_dev.dev) != HAL_SPI_STATE_READY)
-  //          {
-  //          }
-  //
-  //          aTxBuffer[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-  //          aTxBuffer[1] = AD7779_SPI_CRC_TEST_EN;
-  //
-  ////          HAL_GPIO_WritePin(device4->spi_dev.chip_select_port, device4->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-  //          if(HAL_SPI_TransmitReceive_DMA(device4->spi_dev.dev, aTxBuffer, data4, 2) != HAL_OK)
-  ////          if(HAL_SPI_TransmitReceive(device4->spi_dev.dev, aTxBuffer, data4, 2, 5000) != HAL_OK)
-  //          {
-  //            Error_Handler();
-  //          }
-  ////          HAL_GPIO_WritePin(device4->spi_dev.chip_select_port, device4->spi_dev.chip_select_pin, GPIO_PIN_SET);
-  //
-  //          while (HAL_SPI_GetState(device4->spi_dev.dev) != HAL_SPI_STATE_READY)
-  //          {
-  //          }
-
-          }
-        //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-      }
-
-      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
-      HAL_Delay(100);
-      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_SET);
-      HAL_Delay(100);
-      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
+//      HAL_Delay(100);
+//      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_SET);
+//      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_SET);
+//      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_SET);
+//      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_SET);
+//      HAL_Delay(100);
+//      HAL_GPIO_WritePin(ADC1_START_GPIO_Port, ADC1_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC2_START_GPIO_Port, ADC2_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC3_START_GPIO_Port, ADC3_START_Pin, GPIO_PIN_RESET);
+//      HAL_GPIO_WritePin(ADC4_START_GPIO_Port, ADC4_START_Pin, GPIO_PIN_RESET);
 
   //    HAL_GPIO_WritePin(AD3_START_GPIO_Port, AD3_START_Pin, GPIO_PIN_RESET);
   //    HAL_Delay(1);
@@ -3896,1662 +3827,6 @@ int main(void)
 //        }
 //      }
 
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER_CIPLV)
-      {
-	      ovdata4.start = 0xA0;
-	      ovdata4.end = 0xC0;
-//	      ovdata3.start = 0xA0;
-//	      ovdata3.end = 0xC0;
-//	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-//	        {
-//        		ovdata2s[nSrc1].start=ovdata.start;
-//        		ovdata2s[nSrc1].end=ovdata.end;
-//	        }
-
-//    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint8_t*)&(ovdata.counter), 1);
-
-//    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&(ovdata3.counter), 1);
-
-    	  //    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&ic_ccr, 1);
-
-      }
-
-      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_INT_TIMER_FILTER_CIPLV)
-          || (FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER_FILTER_CIPLV))
-      {
-  	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-  	        {
-  	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-  	        	{
-  	   	        	for(int n_m_biquad_coeffs = 0; n_m_biquad_coeffs < 5*IIR_NUMSTAGES; n_m_biquad_coeffs++)
-  					{
-  						a_m_biquad_coeffs[ad_adc*uint8_ad_chan_number+ad_data_channel][n_m_biquad_coeffs] = m_biquad_coeffs[n_m_biquad_coeffs];
-  					}
-  	   	        	a_iir_inst[ad_adc*uint8_ad_chan_number+ad_data_channel].numStages = IIR_ORDER/2;
-  	   	        	a_iir_inst[ad_adc*uint8_ad_chan_number+ad_data_channel].pState = a_m_biquad_state[ad_adc*uint8_ad_chan_number+ad_data_channel];
-  	   	        	a_iir_inst[ad_adc*uint8_ad_chan_number+ad_data_channel].pCoeffs = a_m_biquad_coeffs[ad_adc*uint8_ad_chan_number+ad_data_channel];
-  	        	}
-  	        }
-
-  	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
- 	        {
- 	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
- 	        	{
-	      	        for(int nSrc1 = 0; nSrc1 < CIPLV_BLOCKSIZE; nSrc1 ++)
-	     	        {
-	      	        	aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]=0;
-     	        	}
-     	        }
- 	        }
-
-//			int nc=uint8_ad_adc_number*uint8_ad_chan_number;
-//			int ns=CIPLV_BLOCKSIZE;
-//			int nt=1;
-
-  	        arm_matrix_instance_f32 S_ndat = {uint8_ad_adc_number*uint8_ad_chan_number, CIPLV_BLOCKSIZE, &ndat};
-
-  	        arm_matrix_instance_f32 S_ndat_inv = {CIPLV_BLOCKSIZE, uint8_ad_adc_number*uint8_ad_chan_number, &ndat_inv};
-
-  	        arm_matrix_instance_f32 S_plv = {uint8_ad_adc_number*uint8_ad_chan_number, uint8_ad_adc_number*uint8_ad_chan_number, &plv};
-
-
-            while (1)
-            {
-
-                if(SAI_RxCplt)
-                {
-                  	SAI_RxCplt=0;
-
-//                  	nSrc++;
-//
-//                	if(nSrc==BLOCKSIZE)
-                	{
-//                		nSrc=0;
-//                		ovdata2.start=ovdata.start;
-//                		ovdata2.counter=ovdata.counter;
-
-    	      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-    	     	        {
-    	     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-    	     	        	{
-    	    	      	        for(int nSrc1 = CIPLV_BLOCKSIZE-1; nSrc1 > 0; nSrc1 --)//TODO DMA
-    	    	     	        {
-//        	     	   	        	aSrc[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]=
-//                	     	   	        	aSrc[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1-1];
-        	     	   	        	aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]=
-                	     	   	        	aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1-1];
-    	    	     	        }
-    	     	   	        	aSrc[ad_adc*uint8_ad_chan_number+ad_data_channel][0]=
-    	     	   	        			interpret24bitAsInt32(&(ovdata4.datas[0][ad_data_channel*4]));
-//    	     	   	        	aSrc[ad_adc*uint8_ad_chan_number+ad_data_channel][0]=
-//    	     	   	        			interpret24bitAsInt32(&(ovdata3.datas[ad_adc][ad_data_channel*4]));
-    	     	        	}
-    	     	        }
-
-    	      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-    	     	        {
-    	     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-    	     	        	{
-    	                    	arm_biquad_cascade_df2T_f32(&(a_iir_inst[ad_adc*uint8_ad_chan_number+ad_data_channel]),
-    	                    			aSrc[ad_adc*uint8_ad_chan_number+ad_data_channel],
-										aDst[ad_adc*uint8_ad_chan_number+ad_data_channel], FILTER_BLOCKSIZE);
-    	     	        	}
-	     	        	}
-
-//    	      	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-    	     	        {
-    	      	        	for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-    	     	        	{
-    	     	   	        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-    	     	        		{
-    	     	   	            	ovdata4.datas2[0][ad_data_channel*4+3] = ovdata4.datas[0][ad_data_channel*4+3];
-	    	     	   	        	interpretInt32As24bit(&(ovdata4.datas2[0][ad_data_channel*4]),
-	    	     	   	        			aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][0]);
-//    	     	   	            	ovdata3.datas2[ad_adc][ad_data_channel*4+3] = ovdata3.datas[ad_adc][ad_data_channel*4+3];
-//	    	     	   	        	interpretInt32As24bit(&(ovdata3.datas2[ad_adc][ad_data_channel*4]),
-//	    	     	   	        			aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][0]);
-    	     	   	        	}
-	    	     	   	    }
-
-    	     	        }
-
-//  	        	    	[ nc, ns, nt ] = size( data );
-//  	        	    	ndat = data ./ abs( data );
-//  	        	    	plv = zeros( nc, nc, nt );
-//  	        	    	for t = 1: nt
-//  	        	    	plv( :, :, t ) = abs( ndat( :, :, t ) * ndat( :, :, t )' ) / ns;
-//  	        	    	end
-
-		      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-		     	        {
-		     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-		     	        	{
-		    	      	        for(int nSrc1 = 0; nSrc1 < CIPLV_BLOCKSIZE; nSrc1 ++)
-		    	     	        {
-		    	      	        	ndat[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]=
-		    	      	        			aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]/fabs(aDst[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]);
-    		     	        	}
-    		     	        }
-    	     	        }
-
-
-		      	        arm_mat_trans_f32(&S_ndat, &S_ndat_inv);
-
-		      	        arm_mat_mult_f32(&S_ndat, &S_ndat_inv, &S_plv);
-
-    	        	      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_INT_TIMER_FILTER_CIPLV))
-    	        	      {
-//    	    	      	        for(int nSrc1 = 0; nSrc1 < CIPLV_BLOCKSIZE; nSrc1 ++)
-    	    	     	        {
-    	    	                	for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-    	    	    				{
-    	    	        				for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-    	    	    					{
-    	    	    	                	for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
-    	    	    	    				{
-    	    	    	        				for(int ad_data_channel1 = 0; ad_data_channel1 < uint8_ad_chan_number; ad_data_channel1 ++)
-    	    	    	    					{
-    	    	    	        					//    	    	                  			print_hex((ndat[ad_adc*uint8_ad_chan_number+ad_data_channel][nSrc1]/CIPLV_BLOCKSIZE)*4+4, 8);//          print2_symbol(';');
-    	    	    	                  			print_hex((plv[ad_adc*uint8_ad_chan_number+ad_data_channel]
-																   [ad_adc1*uint8_ad_chan_number+ad_data_channel1]/
-																   ((float)CIPLV_BLOCKSIZE))*255.0, 8);//          print2_symbol(';');
-    	    	    	          					print_symbol(';');
-    	    	    	    					}
-    	    	    	    					print_symbol(';');
-        	    	    					}
-    	    	    	    				print_symbol(';');
-
-//    	    	    	      				print_line();
-    	    	    					}
-//    	    	    					print_symbol(';');
-    	    	    				}
-//    	    	    				print_symbol(';');
-
-//    	    	      				print_line();
-
-    	    	        		}
-    	    	    			print_line();
-    	        	      }
-          	      	      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER_FILTER_CIPLV))
-          	      	      {
-
-	    	                	for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-	    	    				{
-	    	        				for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-	    	    					{
-	    	        					float32_t plv_average=0;
-	    	    	                	for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
-	    	    	    				{
-	    	    	        				for(int ad_data_channel1 = 0; ad_data_channel1 < uint8_ad_chan_number; ad_data_channel1 ++)
-	    	    	    					{
-	    	    	        					if(ad_adc*uint8_ad_chan_number+ad_data_channel!=ad_adc1*uint8_ad_chan_number+ad_data_channel1)
-	    	    	        					{
-		    	    	        					plv_average+=
-		    	    	        					(
-		    	    	        						(plv[ad_adc*uint8_ad_chan_number+ad_data_channel]
-															[ad_adc1*uint8_ad_chan_number+ad_data_channel1]/((float)CIPLV_BLOCKSIZE)
-														)*(1000000.0*8));
-	//	    	    	                  			(plv[ad_adc*uint8_ad_chan_number+ad_data_channel][ad_adc1*uint8_ad_chan_number+ad_data_channel1]/CIPLV_BLOCKSIZE)*255;
-	    	    	        					}
-	    	    	    					}
-	    	    	    				}
-	    	    	                	plv_average/=(float)(uint8_ad_adc_number*uint8_ad_chan_number-1);
-	    	    	                	interpretInt32As24bit(&(ovdata4.datas3[0][ad_data_channel*4]),plv_average);
-//	    	    	                	interpretInt32As24bit(&(ovdata3.datas3[ad_adc][ad_data_channel*4]),plv_average);
-	    	    					}
-	    	    				}
-
-          	                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-          	                  {
-          	                  }
-      	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata4)), (3*4*8+4+4+1)) != HAL_OK)
-//      	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata3)), (3*4*8+4+4+1)) != HAL_OK)
-
-//      	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata3)), (2*4*8+8*7/2+4+4+1)) != HAL_OK)
-      //	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[nSrc])), (2*4*8+4+4+1)) != HAL_OK)
-      //      	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata2s), (2*4*8*2+4+4+1)*BLOCKSIZE) != HAL_OK)
-          	                  {
-          	                    Error_Handler();
-          	                  }
-        //  	                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-        //  	                  {
-        //  	                  }
-          	      	      }
-                	}
-                }
-            }
-
-      }
-
-//      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER)
-//      {
-//	      ovdata2.start = 0xA0;
-//	      ovdata2.end = 0xC0;
-////	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-////	        {
-////        		ovdata2s[nSrc1].start=ovdata.start;
-////        		ovdata2s[nSrc1].end=ovdata.end;
-////	        }
-//
-////    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint8_t*)&(ovdata.counter), 1);
-//    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&(ovdata.counter), 1);
-//    	  //    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&ic_ccr, 1);
-//
-//      }
-//
-//      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_INT_TIMER_FILTER)
-//          || (FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER_FILTER))
-//      {
-//
-//	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//	        {
-//	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//	        	{
-//	   	        	for(int n_m_biquad_coeffs = 0; n_m_biquad_coeffs < 5*IIR_NUMSTAGES; n_m_biquad_coeffs++)
-//					{
-//						a_m_biquad_coeffs[ad_adc][ad_data_channel][n_m_biquad_coeffs] = m_biquad_coeffs[n_m_biquad_coeffs];
-//					}
-//	   	        	a_iir_inst[ad_adc][ad_data_channel].numStages = IIR_ORDER/2;
-//	   	        	a_iir_inst[ad_adc][ad_data_channel].pState = a_m_biquad_state[ad_adc][ad_data_channel];
-//	   	        	a_iir_inst[ad_adc][ad_data_channel].pCoeffs = a_m_biquad_coeffs[ad_adc][ad_data_channel];
-//	        	}
-//	        }
-//
-//          while (1)
-//          {
-//
-//              if(SAI_RxCplt)
-//              {
-//                	SAI_RxCplt=0;
-//
-//                	nSrc++;
-//
-////            		ovdata2s[nSrc].start=ovdata.start;
-////            		ovdata2s[nSrc].counter=ovdata.counter;
-////            		for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-////            		{
-////            	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-////            	        {
-////            				ovdata2s[nSrc].datas[ad_adc][ad_data_channel*4+0]=ovdata.datas[ad_adc][ad_data_channel*4+0];
-////            				ovdata2s[nSrc].datas[ad_adc][ad_data_channel*4+1]=ovdata.datas[ad_adc][ad_data_channel*4+1];
-////            				ovdata2s[nSrc].datas[ad_adc][ad_data_channel*4+2]=ovdata.datas[ad_adc][ad_data_channel*4+2];
-////            				ovdata2s[nSrc].datas[ad_adc][ad_data_channel*4+3]=ovdata.datas[ad_adc][ad_data_channel*4+3];
-////            	        }
-////                 	}
-////            		ovdata2s[nSrc].end=ovdata.end;
-//
-//
-////	      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-////	     	        {
-////	     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-////	     	        	{
-//////	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc]=interpret24bitAsInt32(&(ovdata.datas[ad_adc][ad_data_channel*4+1]));
-////
-////	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc]=interpret24bitAsInt32(&(ovdata2s[nSrc].datas[ad_adc][ad_data_channel*4]));
-////
-//////	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc]=interpret24bitAsInt32(&(ovdata.datas[ad_adc][ad_data_channel*4]));
-//////                			ovdata2s[nSrc].datas[ad_adc][ad_data_channel]=ovdata.start;
-////	     	        	}
-////	     	        }
-//
-//
-//    //            	if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-//    //    			{
-//    //                    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata2), 2*4*8*2+4+4+1);
-//    //    			}
-//    //                if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
-//    //                {
-//    //                    CDC_Transmit_HS((uint8_t*)(&ovdata), 2*4*8*2+4+4+1);
-//    //                }
-//                	if(nSrc==BLOCKSIZE)
-//                	{
-//                		nSrc=0;
-////                		ovdata2.start=ovdata.start;
-////                		ovdata2.counter=ovdata.counter;
-//
-//    	      	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-//    	     	        {
-//        	      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//        	     	        {
-//        	     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//        	     	        	{
-//        //	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc]=interpret24bitAsInt32(&(ovdata.datas[ad_adc][ad_data_channel*4+1]));
-//
-//        	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc1]=interpret24bitAsInt32(&(ovdata2s[nSrc1].datas[ad_adc][ad_data_channel*4]));
-//
-//        //	     	   	        	aSrc[ad_adc][ad_data_channel][nSrc]=interpret24bitAsInt32(&(ovdata.datas[ad_adc][ad_data_channel*4]));
-//        //                			ovdata2s[nSrc].datas[ad_adc][ad_data_channel]=ovdata.start;
-//        	     	        	}
-//        	     	        }
-//    	     	        }
-//
-//
-//    	      	        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//    	     	        {
-//    	     	   	        for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//    	     	        	{
-//    	                    	arm_biquad_cascade_df2T_f32(&(a_iir_inst[ad_adc][ad_data_channel]), aSrc[ad_adc][ad_data_channel], aDst[ad_adc][ad_data_channel], BLOCKSIZE);
-////    	                    	arm_biquad_cascade_df2T_f32(&iir_inst, aSrc[ad_adc][ad_data_channel], aDst[ad_adc][ad_data_channel], BLOCKSIZE);
-////    	     	   	            ovdata2.datas2[ad_adc][ad_data_channel*4+3] = ovdata.datas[ad_adc][ad_data_channel*4+3];
-////    	     	   	        	interpretInt32As24bit(&(ovdata2.datas2[ad_adc][ad_data_channel*4+1]), aDst[ad_adc][ad_data_channel][BLOCKSIZE-1]);
-////    	     	   	        	interpretInt32As24bit(&(ovdata2.datas2[ad_adc][ad_data_channel*4]), aDst[ad_adc][ad_data_channel][0]);
-////    	     	   	        	interpretInt32As24bit(&(ovdata2.datas2[ad_adc][ad_data_channel*4]), aDst[ad_adc][ad_data_channel][BLOCKSIZE-1]);
-//    	     	        	}
-//	     	        	}
-////                		ovdata2.end=ovdata.end;
-//
-//    	      	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-//    	     	        {
-//    	      	        	for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//    	     	        	{
-//    	     	   	        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//    	     	        		{
-//    	     	   	            	ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel*4+3] = ovdata2s[nSrc1].datas[ad_adc][ad_data_channel*4+3];
-//	    	     	   	        	interpretInt32As24bit(&(ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel*4]), aDst[ad_adc][ad_data_channel][nSrc1]);
-//    	     	   	        	}
-//	    	     	   	    }
-//
-//    	     	        }
-//
-//
-//    	      	      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_INT_TIMER_FILTER))
-//    	      	      {
-//
-//    	      	        for(int nSrc1 = 0; nSrc1 < BLOCKSIZE; nSrc1 ++)
-//    	     	        {
-//	                    	for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//          					{
-//	            				for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//            					{
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//
-////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//
-////                      			print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-////                      			print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-////                      			print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-////                      			print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//
-////	                      			print_hex(ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-////                      				print_hex(ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-////                      				print_hex(ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-////                      				print_hex(ovdata2s[nSrc1].datas2[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//
-//	              					print_symbol(';');
-//            					}
-//            					print_symbol(';');
-//          					}
-//          					print_symbol(';');
-//
-//	          				print_line();
-//
-//                		}
-//          				print_line();
-//    	      	      }
-//                	}
-//    	      	      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER_FILTER))
-//    	      	      {
-//
-//    	                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//    	                  {
-//    	                  }
-//	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[0])), (2*4*8+4+4+1)) != HAL_OK)
-////	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[nSrc])), (2*4*8+4+4+1)) != HAL_OK)
-////      	                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata2s), (2*4*8*2+4+4+1)*BLOCKSIZE) != HAL_OK)
-//    	                  {
-//    	                    Error_Handler();
-//    	                  }
-//  //  	                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//  //  	                  {
-//  //  	                  }
-//    	      	      }
-//              }
-//          }
-//      }
-
-
-
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT)
-      {
-	      ovdata.start = 0xA0;
-	      ovdata.end = 0xC0;
-
-//    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint8_t*)&(ovdata.counter), 1);
-    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&(ovdata.counter), 1);
-    	  //    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&ic_ccr, 1);
-
-      }
-
-
-      if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER)
-      {
-
-//	      ovdata.start = 0xA0;
-//	      ovdata.end = 0xC0;
-//
-////    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint8_t*)&(ovdata.counter), 1);
-//    	  HAL_TIM_IC_Start_DMA(&htim8, TIM_CHANNEL_2, (uint32_t*)&(ovdata.counter), 1);
-
-//          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//          {
-//          }
-////          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 8*2) != HAL_OK)
-////          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata.datas), 2*4*8) != HAL_OK)
-////          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata), 2*4*8+1+4+1) != HAL_OK)
-//              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata), 2*4*8+4+4+1) != HAL_OK)
-////          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-//          {
-//            Error_Handler();
-//          }
-//          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//          {
-//          }
-
-//          HAL_DMA_Start_IT(&hdma_dma_generator2, (uint32_t)datas[0], (uint32_t)&huart1.Instance->TDR, 32);
-
-//          HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&htim8.Instance->CNT, (uint32_t)(datas), 1);
-//          HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&(htim8.Instance->CNT), (uint32_t)(cnt), 1);
-//          __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-
-//    	  HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(&ovdata.datas), (uint32_t)&huart1.Instance->TDR, 2*4*8);
-
-//          HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(&ovdata), (uint32_t)&huart1.Instance->TDR, 2*4*8+1+4+1);
-
-//    	  HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(&ovdata), (uint32_t)&huart1.Instance->TDR, 2*4*8+4+4+1);
-//    	  __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-//    	  HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_UPDATE], (uint32_t)(&ovdata), (uint32_t)&huart1.Instance->TDR, 2*4*8+4+4+1);
-//    	  __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
-
-//    	  HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_CC1], (uint32_t)(&ovdata), (uint32_t)&huart1.Instance->TDR, 2*4*8+4+4+1);
-//    	  __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_CC1);
-//    	  HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(&ovdata), (uint32_t)&huart1.Instance->TDR, 2*4*8+4+4+1);
-//    	  __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-
-//	    HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(datas[0]), (uint32_t)&huart1.Instance->TDR, 32);
-//	   __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-
-
-          while (1)
-          {
-//    		  datas[0][2]=(cnt[0]>>1)&(1<<4|1<<3|1<<2|1<<1|1<<0);
-//    		  datas[0][2]=(ic_ccr)&0xff;
-//    		  datas[0][2]=(ovdata.counter)&0xff;
-//        	  if(datas[0][3]!=datas[0][2])
-        		  if(0)
-        	  {
-                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-                  {
-                  }
-        //          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 8*2) != HAL_OK)
-        //          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata.datas), 2*4*8) != HAL_OK)
-        //          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata), 2*4*8+1+4+1) != HAL_OK)
-                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata), 2*4*8+4+4+1) != HAL_OK)
-        //          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-                  {
-                    Error_Handler();
-                  }
-                  while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-                  {
-                  }
-
-
-//        		  print_binary(datas[0][2], 8);          print_symbol(';');
-//
-        		  datas[0][3]=datas[0][2];
-//            		print_binary(datas[0][0], 8);          print_symbol('.');
-//              		print_binary(datas[0][1], 8);          print_symbol('.');
-////        		  datas[0][2]=((datas[0][0]&(1<<5|1<<4|1<<3|1<<2|1<<1|1<<0))<<2)|((datas[0][0]&(1<<7|1<<6)>>6)&(1<<1|1<<0));
-//          		print_binary(datas[0][2], 8);          print_symbol('.');
-////      		  datas[0][3]=((datas[0][0]&(1<<5|1<<4|1<<3|1<<2|1<<1|1<<0))<<2);
-////    		  datas[0][4]=((datas[0][0]&(1<<7|1<<6)>>6)&(1<<1|1<<0));
-//            		print_binary(datas[0][3], 8);          print_symbol('.');
-////            		print_binary(datas[0][4], 8);          print_symbol('.');
-//        		  datas[0][0]=cnt[0]&0xff;
-//        		  print_binary(datas[0][0], 8);          print_symbol('.');
-//        		  datas[0][1]=(cnt[0]>>8)&0xff;
-//        		  datas[0][2]=(cnt[0]>>16)&0xff;
-//        		  datas[0][3]=(cnt[0]>>24)&0xff;
-//        		  datas[0][1]=(htim8.Instance->CNT)&0xff;
-//        		  print_binary(datas[0][1], 8);          print_symbol('.');
-//        		  datas[0][2]=(cnt[0]>>1)&(1<<4|1<<3|1<<2|1<<1|1<<0);
-//        		  print_binary(datas[0][2], 8);          print_symbol('.');
-
-//	   	        	for(int ad_data = 0; ad_data < 2*4*8+4+4+1; ad_data ++)
-////		   	        	for(int ad_data = 0; ad_data < 2*4*8+1+4+1; ad_data ++)
-//	   	        	{
-////	     	        		print_binary(ovdata.datas[ad_adc][ad_data_channel], 8);          print_symbol('.');
-//	   	        		print_hex(((uint8_t*)&ovdata)[ad_data], 8);          print_symbol(';');
-//	   	        	}
-//
-////	      	        for(int ad_adc = 0; ad_adc < 2; ad_adc ++)
-////	     	        {
-//////	     	        	for(int ad_data_channel = 0; ad_data_channel < 32; ad_data_channel ++)
-////	     	   	        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-////	     	        	{
-//////	     	        		print_binary(ovdata.datas[ad_adc][ad_data_channel], 8);          print_symbol('.');
-////		     	        		print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);          print_symbol(';');
-////		     	        		print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);          //print_symbol(';');
-////		     	        		print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);          //print_symbol(';');
-////		     	        		print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);          //print_symbol(';');
-////		     	         		print_symbol(';');
-////	     	        	}
-////	     	         		print_symbol(';');
-////	     	        }
-//
-//         		print_symbol(';');
-//             	print_line();
-        	  }
-
-
-//              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//              {
-//              }
-//              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 2*4*8) != HAL_OK)
-//              {
-//                Error_Handler();
-//              }
-          }
-
-      }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER
-
-
-      if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_TIMER)
-      {
-//          const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-////              uint8_t dataBuffer[uint8_data_number];
-//
-//        dataBuffer_print[0] = 0xA0;
-//        dataBuffer_print[1] = ui8SampleNumber++;
-//
-////            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-//        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//        {
-////                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
-//          for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//          {
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-//
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 2];
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 0];
-//          }
-//        }
-////            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
-////            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
-//        for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-//        {
-//          dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-//          dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-//        }
-////            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-//        dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-//
-//        if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-//        {
-//          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//          {
-//          }
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint8_data_number) != HAL_OK)
-//          {
-//            Error_Handler();
-//          }
-//        }
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER)
-          {
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-    //          HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-    //          HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-              {
-              }
-              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-              {
-              }
-          }
-
-//          HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 32);
-//          HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), SAI_DATASIZE_32);
-//         __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-//          HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 4);
-//          HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), SAI_DATASIZE_32);
-//         __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-
-//          HAL_DMA_Start_IT(&hdma_dma_generator0, (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), SAI_DATASIZE_32);
-//          HAL_DMA_Start_IT(&hdma_dma_generator1, (uint32_t)&hsai_BlockA1.Instance->DR, (uint32_t)(datas[1]), SAI_DATASIZE_32);
-
-
-          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-          {
-          }
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 8*2) != HAL_OK)
-          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 2*4*8) != HAL_OK)
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-          {
-            Error_Handler();
-          }
-          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-          {
-          }
-
-//          HAL_DMA_Start_IT(&hdma_dma_generator2, (uint32_t)datas[0], (uint32_t)&huart1.Instance->TDR, 32);
-
-  	    HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(datas[0]), (uint32_t)&huart1.Instance->TDR, 2*32);
-  	   __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-//	    HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)(datas[0]), (uint32_t)&huart1.Instance->TDR, 32);
-//	   __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-
-          while (1)
-          {
-
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-//              HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-//              HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-              {
-              }
-              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-              {
-              }
-
-//              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//              {
-//              }
-//              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 2*4*8) != HAL_OK)
-//              {
-//                Error_Handler();
-//              }
-          }
-
-      }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_TIMER
-
-
-
-      if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_DMAMUX)
-      {
-//          const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
-////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-////              uint8_t dataBuffer[uint8_data_number];
-//
-//        dataBuffer_print[0] = 0xA0;
-//        dataBuffer_print[1] = ui8SampleNumber++;
-//
-////            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-//        for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//        {
-////                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
-//          for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//          {
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-//
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 2];
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
-//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 0];
-//          }
-//        }
-////            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
-////            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
-//        for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-//        {
-//          dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-//          dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-//        }
-////            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
-////            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-//        dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-//
-//        if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-//        {
-//          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//          {
-//          }
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint8_data_number) != HAL_OK)
-//          {
-//            Error_Handler();
-//          }
-//        }
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_DMAMUX)
-          {
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-    //          HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-    //          HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-              {
-              }
-              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-              {
-              }
-          }
-
-//          HAL_DMA_Start_IT(&hdma_dma_generator0, (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), SAI_DATASIZE_32);
-//          HAL_DMA_Start_IT(&hdma_dma_generator1, (uint32_t)&hsai_BlockA1.Instance->DR, (uint32_t)(datas[1]), SAI_DATASIZE_32);
-
-          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-          {
-          }
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 8*2) != HAL_OK)
-          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas, 4*8*2) != HAL_OK)
-//          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-          {
-            Error_Handler();
-          }
-
-//          HAL_DMA_Start_IT(&hdma_dma_generator2, (uint32_t)datas, (uint32_t)&huart1.Instance->TDR, 64);
-
-          while (1)
-          {
-
-//  	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-//  	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-//    //          HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-//    //          HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-//              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-//              {
-//              }
-//              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-//              {
-//              }
-//
-              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-              {
-              }
-              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-              {
-                Error_Handler();
-              }
-          }
-
-      }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_DMAMUX
-
-      if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_DMAMUX)
-      {
-
-//    	  UART_Printf("FREESMARTEEG_ADC_SAI_READ_DMAMUX\r\n");
-
-//    	  datas[0][0]='t';
-//    	  datas[0][1]='e';
-//    	  datas[0][2]='s';
-//    	  datas[0][3]='t';
-//    	  datas[0][4]='0';
-          if(HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32) != HAL_OK)
-          {
-            Error_Handler();
-          }
-          if(HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32) != HAL_OK)
-          {
-            Error_Handler();
-          }
-//          HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-//          HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-          while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-          {
-          }
-          while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-          {
-          }
-//          while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-//          {
-//          }
-//          while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-//          {
-//          }
-
-//    	  datas[0][0]='t';
-//    	  datas[0][1]='e';
-//    	  datas[0][2]='s';
-//    	  datas[0][3]='t';
-//    	  datas[0][4]='1';
-
-          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-          {
-          }
-          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)datas[0], 4*8*2) != HAL_OK)
-          {
-            Error_Handler();
-          }
-//          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-//          {
-//          }
-
-//          int test_counter=0;
-          while (1)
-          {
-
-//        	  print_hex(test_counter++,32);
-
-//            if(DMA_TransferErrorFlag != 0)
-//            {
-//              Error_Handler();
-//            }
-          }
-
-
-
-      }//FREESMARTEEG_ADC_SAI_READ_DMAMUX
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_I2S_READ)
-          {
-              while(1)
-              {
-                  int drdy_pin = HAL_GPIO_ReadPin(AD_DRDY_GPIO_Port, AD_DRDY_Pin);
-  //                print7_hex(drdy_pin, 1);
-  //                print7_symbol(';');
-                  int drdy_count=0;
-                  while (drdy_pin == 0)
-                  {
-                  	drdy_pin = HAL_GPIO_ReadPin(AD_DRDY_GPIO_Port, AD_DRDY_Pin);
-  //                    print7_hex(drdy_pin, 1);
-  //                    print7_symbol(';');
-                  	drdy_count++;
-                  }
-
-//                  HAL_SAI_Receive(&hsai_BlockB2, datasBuffer[0], SAI_DATASIZE_32, 5000);
-
-
-//                  HAL_I2S_Receive(&hi2s1, (uint16_t *)(datasBuffer[0]), 32, 5000);
-
-
-//                  HAL_I2S_Receive_DMA(&hi2s1, (uint16_t *)(datasBuffer[0]), 32);
-  //                            aTxBuffer[0]=0x80;
-  //                            aTxBuffer[1]=0x00;
-  //                            HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, datasBuffer[0], 8*4);
-  //                HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, datasBuffer[0], 8*4, 100);
-
-
-//                              while (HAL_I2S_GetState(&hi2s1) != HAL_I2S_STATE_READY)
-
-
-                              {
-                              }
-
-          	    if(FREESMARTEEG_OUT & FREESMARTEEG_I2S_TEXT_UART7)
-          	    {
-          	        for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-          	        {
-          	        	for(int ad_data_channel = 0; ad_data_channel < 8; ad_data_channel ++)
-          //		        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-          	        	{
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-          //                    CLEAR_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-          //                    SET_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-
-          	        		print7_symbol(';');
-          	        	}
-          	        	print7_line();
-          	        }
-          	    }//FREESMARTEEG_I2S_TEXT_UART7
-
-                if(FREESMARTEEG_OUT & FREESMARTEEG_I2S_OPENVIBE_FREEEEG32_CUSTOM)
-        //            if(0)//openbci
-                    if(SPI_RxCplt)
-                {
-                    	SPI_RxCplt=0;
-
-                  if(1)
-                  {
-                              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-        //            const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-                    uint8_t dataBuffer[uint8_data_number];
-
-                    dataBuffer[0] = 0xA0;
-                    dataBuffer[1] = ui8SampleNumber++;
-
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-                    {
-                      for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-                      {
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-                      }
-                    }
-                    for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-                    {
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-                    }
-                            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-        //            dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-
-                    if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-                    {
-                      while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-                      {
-                      }
-                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-                      {
-                        Error_Handler();
-                      }
-                    }
-//                    if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
-//                    {
-//                      while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//                      {
-//                      }
-//                      if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-//                      {
-//                        Error_Handler();
-//                      }
-//                    }
-                  }
-                }//FREESMARTEEG_I2S_OPENVIBE_FREEEEG32_CUSTOM
-
-              }
-
-          }
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ)
-          {
-              while(1)
-              {
-                  int drdy_pin = HAL_GPIO_ReadPin(AD_DRDY_GPIO_Port, AD_DRDY_Pin);
-  //                print7_hex(drdy_pin, 1);
-  //                print7_symbol(';');
-                  int drdy_count=0;
-                  while (drdy_pin == 0)
-                  {
-                  	drdy_pin = HAL_GPIO_ReadPin(AD_DRDY_GPIO_Port, AD_DRDY_Pin);
-  //                    print7_hex(drdy_pin, 1);
-  //                    print7_symbol(';');
-                  	drdy_count++;
-                  }
-
-//                  HAL_SAI_Receive(&hsai_BlockB2, datasBuffer[0], SAI_DATASIZE_32, 5000);
-                  HAL_SAI_Receive_DMA(&hsai_BlockB1, datasBuffer[0], SAI_DATASIZE_32);
-//                  HAL_SAI_Receive_DMA(&hsai_BlockA1, datasBuffer[2], SAI_DATASIZE_32);
-//                  HAL_SAI_Receive_DMA(&hsai_BlockB2, datasBuffer[0], SAI_DATASIZE_32);
-  //                            aTxBuffer[0]=0x80;
-  //                            aTxBuffer[1]=0x00;
-  //                            HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, datasBuffer[0], 8*4);
-  //                HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, datasBuffer[0], 8*4, 100);
-                  while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-//                              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-                              {
-                              }
-
-          	    if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_UART7)
-          	    {
-          	        for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-          	        {
-          	        	for(int ad_data_channel = 0; ad_data_channel < 8; ad_data_channel ++)
-          //		        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-          	        	{
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-          //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-          //                    CLEAR_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-          //                    SET_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-          	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-
-          	        		print7_symbol(';');
-          	        	}
-          	        	print7_line();
-          	        }
-          	    }//FREESMARTEEG_SAI_TEXT_UART7
-
-                if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM)
-        //            if(0)//openbci
-                    if(SPI_RxCplt)
-                {
-                    	SPI_RxCplt=0;
-
-                  if(1)
-                  {
-                              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-        //            const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-                    uint8_t dataBuffer[uint8_data_number];
-
-                    dataBuffer[0] = 0xA0;
-                    dataBuffer[1] = ui8SampleNumber++;
-
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-                    {
-                      for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-                      {
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-                        dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-                      }
-                    }
-                    for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-                    {
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-                    }
-                            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-        //            dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-
-                    if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-                    {
-                      while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-                      {
-                      }
-                      if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-                      {
-                        Error_Handler();
-                      }
-                    }
-//                    if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
-//                    {
-//                      while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//                      {
-//                      }
-//                      if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-//                      {
-//                        Error_Handler();
-//                      }
-//                    }
-                  }
-                }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM
-
-              }
-
-          }
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER)
-    {
-
-
-//        	  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-//        	  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
-//        	  TIM_MasterConfigTypeDef sMasterConfig = {0};
-//        	  TIM_IC_InitTypeDef sConfigIC = {0};
-//
-//        	  /* USER CODE BEGIN TIM1_Init 1 */
-//
-//        	  /* USER CODE END TIM1_Init 1 */
-//        	  htim1.Instance = TIM1;
-//        	  htim1.Init.Prescaler = 0;
-//        	  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-//        	  htim1.Init.Period = 0;
-//        	  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-//        	  htim1.Init.RepetitionCounter = 0;
-//        	  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-//        	  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-////        	  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-//        	  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
-//        	  sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
-//        	  sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
-//        	  sClockSourceConfig.ClockFilter = 0;
-//        	  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_COMBINED_RESETTRIGGER;
-//        	  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
-////        	  sSlaveConfig.TriggerPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
-//        	  sSlaveConfig.TriggerPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-//        	  sSlaveConfig.TriggerFilter = 0;
-//        	  if (HAL_TIM_SlaveConfigSynchro(&htim1, &sSlaveConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
-//        	  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-//        	  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-//        	  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-////        	  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
-//        	  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-//        	  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-//        	  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-//        	  sConfigIC.ICFilter = 0;
-//        	  if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//
-//        	  /* USER CODE BEGIN TIM1_Init 1 */
-//
-//        	  /* USER CODE END TIM1_Init 1 */
-//        	  htim8.Instance = TIM8;
-//        	  htim8.Init.Prescaler = 0;
-//        	  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-//        	  htim8.Init.Period = 256;
-//        	  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-//        	  htim8.Init.RepetitionCounter = 0;
-//        	  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-//        	  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-////        	  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-//        	  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
-//        	  sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
-//        	  sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
-//        	  sClockSourceConfig.ClockFilter = 0;
-//        	  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  if (HAL_TIM_IC_Init(&htim8) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_TRIGGER;
-//        	  sSlaveConfig.InputTrigger = TIM_TS_ITR0;
-//        	  if (HAL_TIM_SlaveConfigSynchro(&htim8, &sSlaveConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-//        	  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-//        	  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-//        	  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-////        	  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
-//        	  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-//        	  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-//        	  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-//        	  sConfigIC.ICFilter = 0;
-//        	  if (HAL_TIM_IC_ConfigChannel(&htim8, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//        	  if (HAL_TIM_IC_ConfigChannel(&htim8, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
-//        	  {
-//        	    Error_Handler();
-//        	  }
-//
-//        	    /* TIM1 DMA Init */
-//        	    /* TIM1_CH1 Init */
-//        	    hdma_tim1_ch1.Instance = DMA2_Stream3;
-//        	    hdma_tim1_ch1.Init.Channel = DMA_CHANNEL_6;
-////        	    hdma_tim1_ch1.Init.Direction = DMA_PERIPH_TO_MEMORY;
-//        	    hdma_tim1_ch1.Init.Direction = DMA_MEMORY_TO_PERIPH;
-//        	    hdma_tim1_ch1.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim1_ch1.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim1_ch1.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim1_ch1.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim1_ch1.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim1_ch1.Init.Priority = DMA_PRIORITY_VERY_HIGH;
-////        	    hdma_tim1_ch1.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim1_ch1.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim1_ch1.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim1_ch1.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim1_ch1.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim1_ch1) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-//
-////        	    __HAL_LINKDMA(htim1,hdma[TIM_DMA_ID_CC1],hdma_tim1_ch1);
-//
-//        	    /* TIM1_CH4_TRIG_COM Init */
-//        	    hdma_tim1_ch4_trig_com.Instance = DMA2_Stream4;
-//        	    hdma_tim1_ch4_trig_com.Init.Channel = DMA_CHANNEL_6;
-//        	    hdma_tim1_ch4_trig_com.Init.Direction = DMA_PERIPH_TO_MEMORY;
-//        	    hdma_tim1_ch4_trig_com.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim1_ch4_trig_com.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim1_ch4_trig_com.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim1_ch4_trig_com.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim1_ch4_trig_com.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim1_ch4_trig_com.Init.Priority = DMA_PRIORITY_VERY_HIGH;
-////        	    hdma_tim1_ch4_trig_com.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim1_ch4_trig_com.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim1_ch4_trig_com.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim1_ch4_trig_com.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim1_ch4_trig_com.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim1_ch4_trig_com) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-//
-//        	    /* Several peripheral DMA handle pointers point to the same DMA handle.
-//        	     Be aware that there is only one stream to perform all the requested DMAs. */
-////        	    __HAL_LINKDMA(htim1,hdma[TIM_DMA_ID_CC4],hdma_tim1_ch4_trig_com);
-////        	    __HAL_LINKDMA(htim1,hdma[TIM_DMA_ID_TRIGGER],hdma_tim1_ch4_trig_com);
-////        	    __HAL_LINKDMA(htim1,hdma[TIM_DMA_ID_COMMUTATION],hdma_tim1_ch4_trig_com);
-//
-//        	    /* TIM1_UP Init */
-//        	    hdma_tim1_up.Instance = DMA2_Stream5;
-//        	    hdma_tim1_up.Init.Channel = DMA_CHANNEL_6;
-//        	    hdma_tim1_up.Init.Direction = DMA_PERIPH_TO_MEMORY;
-//        	    hdma_tim1_up.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim1_up.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim1_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim1_up.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim1_up.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim1_up.Init.Priority = DMA_PRIORITY_VERY_HIGH;
-////        	    hdma_tim1_up.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim1_up.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim1_up.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim1_up.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim1_up.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim1_up) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-//
-////        	    __HAL_LINKDMA(htim1,hdma[TIM_DMA_ID_UPDATE],hdma_tim1_up);
-//
-//        	    /* TIM8_CH1 Init */
-//        	    hdma_tim8_ch1.Instance = DMA2_Stream2;
-//        	    hdma_tim8_ch1.Init.Channel = DMA_CHANNEL_7;
-//        	    hdma_tim8_ch1.Init.Direction = DMA_MEMORY_TO_PERIPH;
-//        	    hdma_tim8_ch1.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim8_ch1.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim8_ch1.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim8_ch1.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim8_ch1.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim8_ch1.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim8_ch1.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim8_ch1.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim8_ch1.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim8_ch1.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim8_ch1) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-//
-////        	    __HAL_LINKDMA(htim_base,hdma[TIM_DMA_ID_CC1],hdma_tim8_ch1);
-//
-//        	    /* TIM8_CH4_TRIG_COM Init */
-//        	    hdma_tim8_ch4_trig_com.Instance = DMA2_Stream7;
-//        	    hdma_tim8_ch4_trig_com.Init.Channel = DMA_CHANNEL_7;
-//        	    hdma_tim8_ch4_trig_com.Init.Direction = DMA_PERIPH_TO_MEMORY;
-//        	    hdma_tim8_ch4_trig_com.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim8_ch4_trig_com.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim8_ch4_trig_com.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim8_ch4_trig_com.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim8_ch4_trig_com.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim8_ch4_trig_com.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim8_ch4_trig_com.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim8_ch4_trig_com.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim8_ch4_trig_com.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim8_ch4_trig_com.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim8_ch4_trig_com) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-//
-//        	    /* Several peripheral DMA handle pointers point to the same DMA handle.
-//        	     Be aware that there is only one stream to perform all the requested DMAs. */
-////        	    __HAL_LINKDMA(htim_base,hdma[TIM_DMA_ID_CC4],hdma_tim8_ch4_trig_com);
-////        	    __HAL_LINKDMA(htim_base,hdma[TIM_DMA_ID_TRIGGER],hdma_tim8_ch4_trig_com);
-////        	    __HAL_LINKDMA(htim_base,hdma[TIM_DMA_ID_COMMUTATION],hdma_tim8_ch4_trig_com);
-//
-//        	    /* TIM8_UP Init */
-//        	    hdma_tim8_up.Instance = DMA2_Stream1;
-//        	    hdma_tim8_up.Init.Channel = DMA_CHANNEL_7;
-//        	    hdma_tim8_up.Init.Direction = DMA_MEMORY_TO_PERIPH;
-//        	    hdma_tim8_up.Init.PeriphInc = DMA_PINC_DISABLE;
-//        	    hdma_tim8_up.Init.MemInc = DMA_MINC_ENABLE;
-//        	    hdma_tim8_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-//        	    hdma_tim8_up.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-//        	    hdma_tim8_up.Init.Mode = DMA_CIRCULAR;
-//        	    hdma_tim8_up.Init.Priority = DMA_PRIORITY_LOW;
-//        	    hdma_tim8_up.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
-//        	    hdma_tim8_up.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-//        	    hdma_tim8_up.Init.MemBurst = DMA_MBURST_SINGLE;
-//        	    hdma_tim8_up.Init.PeriphBurst = DMA_PBURST_SINGLE;
-//        	    if (HAL_DMA_Init(&hdma_tim8_up) != HAL_OK)
-//        	    {
-//        	      Error_Handler();
-//        	    }
-
-
-              HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[0], SAI_DATASIZE_32);
-//              HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-//              HAL_SAI_Receive_DMA(&hsai_BlockB2, dataBuffer110[2], SAI_DATASIZE_32);
-//              HAL_SAI_Receive_DMA(&hsai_BlockB2, (&(dataBuffer110[2])), SAI_DATASIZE_32);
-              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-//                          while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-                          {
-                          }
-
-//              HAL_DMA_Start(htim1.hdma[TIM_DMA_ID_UPDATE], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(&(dataBuffer110[2])), 32);
-//              HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_UPDATE], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(&(dataBuffer110[2])), 32);
-//              __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
-
-//              HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 32);
-//              __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-//              HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(&(dataBuffer110[2])), 32);
-//              __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-
-
-
-//
-//              HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB1.Instance->DR, (uint32_t)(datas[0]), 32);
-////             HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 32);
-//             __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-//
-//
-
-
-
-//             HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_CC1], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 32);
-//             __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_CC1);
-//              HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_UPDATE], (uint32_t)&hsai_BlockB2.Instance->DR, (uint32_t)(datas[0]), 32);
-//                 __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
-
-//        	    HAL_DMA_Start_IT(htim1.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&(dataBuffer110[1]), (uint32_t)&huart7.Instance->TDR, 1);
-//        	   __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_TRIGGER);
-////
-        	      dataBuffer110[0] = 0xA0;
-        	      dataBuffer110[dataBuffer110size-1] = 0xC0;
-////
-//        	      HAL_DMA_Start(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&htim8.Instance->CNT, (uint32_t)(&(dataBuffer110[1])), 1);
-//        	      HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&htim8.Instance->CNT, (uint32_t)(&(dataBuffer110[1])), 1);
-
-
-
-//
-//        	      HAL_DMA_Start_IT(htim8.hdma[TIM_DMA_ID_TRIGGER], (uint32_t)&htim8.Instance->CNT, (uint32_t)(datas[1]), 4);
-//        	      __HAL_TIM_ENABLE_DMA(&htim8, TIM_DMA_TRIGGER);
-//
-
-
-
-
-       while(1)
-       {
-
-
-   	    if(FREESMARTEEG_OUT & FREESMARTEEG_DMA_UART7_SAI2B_TIMER)
-   //	            if(0)
-   	    {
-
-//   	    	if(datasBuffer[2][0]!=dataBuffer110[1])
-   //	      if((datasBuffer[2][0]!=datasBuffer[0][0])
-   //	    			||(datasBuffer[2][1]!=datasBuffer[0][1])
-   //	    			||(datasBuffer[2][2]!=datasBuffer[0][2])
-   //	    			||(datasBuffer[2][3]!=datasBuffer[0][3])
-   //	    			||(datasBuffer[2][4]!=datasBuffer[0][4])
-   //	    			||(datasBuffer[2][5]!=datasBuffer[0][5])
-   //	    			||(datasBuffer[2][6]!=datasBuffer[0][6])
-   //					||(datasBuffer[2][7]!=datasBuffer[0][7]))
-   	      {
-
-      		print7_binary(dataBuffer110[0], 8);          print7_symbol(';');
-//    		print7_binary(dataBuffer110[1], 8);          print7_symbol(';');
-    		print7_binary(datas[1][0], 8);          print7_symbol('.');
-    		print7_binary(datas[1][1], 8);          print7_symbol('.');
-    		print7_binary(datas[1][2], 8);          print7_symbol('.');
-    		print7_binary(datas[1][3], 8);          print7_symbol(';');
-//    	    	  if(0)
-//     	        for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-//    	        for(int ad_adc = 0; ad_adc < 4; ad_adc ++)
-   	        {
-//   	        	for(int ad_data_out = 0; ad_data_out < dataBuffer110size; ad_data_out ++)
-   	        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-   	        	   //		        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-   	        	{
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-   //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-   //                    CLEAR_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-
-   //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-   //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-   ////                    SET_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-   //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-   //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//   	        		print7_binary(dataBuffer110[ad_data_channel * 4 + 0+2], 8);//          print2_symbol(';');
-//   	        		print7_binary(dataBuffer110[ad_data_channel * 4 + 1+2], 8);//          print2_symbol(';');
-//   	        		print7_binary(dataBuffer110[ad_data_channel * 4 + 2+2], 8);//          print2_symbol(';');
-//   	        		print7_binary(dataBuffer110[ad_data_channel * 4 + 3+2], 8);//          print2_symbol(';');
-	        		print7_binary(datas[0][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-	        		print7_binary(datas[0][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-	        		print7_binary(datas[0][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-	        		print7_binary(datas[0][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-   //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-   //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-   //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-   //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-   	        		print7_symbol(';');
-   	        	}
-
-
-   //        		print7_symbol(';');
-   	        }
-        		print7_binary(dataBuffer110[dataBuffer110size-1], 8);          print7_symbol(';');
-
-   	    	  //	        	print7_hex(dataBuffer110[0], 8);//          print2_symbol(';');
-   	    	  //	        	print7_hex(dataBuffer110[1], 8);//          print2_symbol(';');
-   	    	  //	      		print7_binary(dataBuffer110[2], 8);//          print2_symbol(';');
-
-   	    	  //      		print7_symbol(';');
-   //	    	  	        	for(int Buffer_data = 0; Buffer_data < dataBuffer110size; Buffer_data ++)
-   //	    	  	        	{
-   //	    	  	        		print7_hex(dataBuffer110[Buffer_data], 8);
-   //	    	  	        	}
-
-   	    	  //	        	print7_hex(dataBuffer110[2 + uint8_ad_chan_number * (1 + 3) * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0], 8);//          print2_symbol(';');
-
-           	print7_line();
-
-//                                while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//                                {
-//                                }
-////                                if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)&(dataBuffer110[1]), 1) != HAL_OK)
-//                                if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)&(datasBuffer[0]), 1) != HAL_OK)
-//    //                            if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer110, dataBuffer110size) != HAL_OK)
-//                                {
-//                                  Error_Handler();
-//                                }
-
-            	    	datasBuffer[2][0]=dataBuffer110[1];
-   //	    	datasBuffer[2][0]=datasBuffer[0][0];
-   //	    	datasBuffer[2][1]=datasBuffer[0][1];
-   //	    	datasBuffer[2][2]=datasBuffer[0][2];
-   //	    	datasBuffer[2][3]=datasBuffer[0][3];
-   //	    	datasBuffer[2][4]=datasBuffer[0][4];
-   //	    	datasBuffer[2][5]=datasBuffer[0][5];
-   //	    	datasBuffer[2][6]=datasBuffer[0][6];
-   //			datasBuffer[2][7]=datasBuffer[0][7];
-   	      }
-
-   	    }//FREESMARTEEG_DMA_UART7_SAI2B_TIMER
-
-    	    if(FREESMARTEEG_OUT & FREESMARTEEG_TEXT_UART7_SAI2B_TIMER)
-    //	            if(0)
-    	    {
-
-    //	      if((datasBuffer[2][0]!=datasBuffer[0][0])
-    //	    			||(datasBuffer[2][1]!=datasBuffer[0][1])
-    //	    			||(datasBuffer[2][2]!=datasBuffer[0][2])
-    //	    			||(datasBuffer[2][3]!=datasBuffer[0][3])
-    //	    			||(datasBuffer[2][4]!=datasBuffer[0][4])
-    //	    			||(datasBuffer[2][5]!=datasBuffer[0][5])
-    //	    			||(datasBuffer[2][6]!=datasBuffer[0][6])
-    //					||(datasBuffer[2][7]!=datasBuffer[0][7]))
-    	      {
-
-//    	    	  if(0)
-      	        for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-//    	        for(int ad_adc = 0; ad_adc < 4; ad_adc ++)
-    	        {
-    	        	for(int ad_data_channel = 0; ad_data_channel < 8; ad_data_channel ++)
-    //		        	for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-    	        	{
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-    //	        		print7_hex(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-    //                    CLEAR_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-
-    //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-    //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-    ////                    SET_BIT(hspi6.Instance->CR1, SPI_CR1_SSI);
-    //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-    //	        		print7_binary(datasBuffer[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-    	        		print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-    	        		print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-    	        		print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-    	        		print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-    //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-    //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-    //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-    //	        		print7_binary(dataBuffer110[2 + ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-    	        		print7_symbol(';');
-    	        	}
-
-
-    //        		print7_symbol(';');
-    	        }
-
-    	    	  //	        	print7_hex(dataBuffer110[0], 8);//          print2_symbol(';');
-    	    	  //	        	print7_hex(dataBuffer110[1], 8);//          print2_symbol(';');
-    	    	  //	      		print7_binary(dataBuffer110[2], 8);//          print2_symbol(';');
-
-    	    	  //      		print7_symbol(';');
-    //	    	  	        	for(int Buffer_data = 0; Buffer_data < dataBuffer110size; Buffer_data ++)
-    //	    	  	        	{
-    //	    	  	        		print7_hex(dataBuffer110[Buffer_data], 8);
-    //	    	  	        	}
-
-    	    	  //	        	print7_hex(dataBuffer110[2 + uint8_ad_chan_number * (1 + 3) * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0], 8);//          print2_symbol(';');
-
-            	print7_line();
-
-//                                while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//                                {
-//                                }
-////                                if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)&(dataBuffer110[1]), 1) != HAL_OK)
-//                                if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)&(datasBuffer[0]), 1) != HAL_OK)
-//    //                            if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer110, dataBuffer110size) != HAL_OK)
-//                                {
-//                                  Error_Handler();
-//                                }
-
-    //	    	datasBuffer[2][0]=datasBuffer[0][0];
-    //	    	datasBuffer[2][1]=datasBuffer[0][1];
-    //	    	datasBuffer[2][2]=datasBuffer[0][2];
-    //	    	datasBuffer[2][3]=datasBuffer[0][3];
-    //	    	datasBuffer[2][4]=datasBuffer[0][4];
-    //	    	datasBuffer[2][5]=datasBuffer[0][5];
-    //	    	datasBuffer[2][6]=datasBuffer[0][6];
-    //			datasBuffer[2][7]=datasBuffer[0][7];
-    	      }
-
-    	    }//FREESMARTEEG_TEXT_UART7_SAI2B_TIMER
-            if(FREESMARTEEG_OUT & FREESMARTEEG_OPENVIBE_FREEEEG32_UART7_SAI2B_TIMER)
-     	    {
-                if(1)
-                {
-                  const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-                  uint8_t dataBuffer[uint8_data_number];
-
-                  dataBuffer[0] = 0xA0;
-                  dataBuffer[1] = ui8SampleNumber++;
-
-                  for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-                  {
-                    for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-                    {
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-                      dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-                    }
-                  }
-                  for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-                  {
-                    dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-                    dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-                  }
-                  dataBuffer[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-
-                  if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-                  {
-                    while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-                    {
-                    }
-                    if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                  }
-//                  if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
-//                  {
-//                    while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//                    {
-//                    }
-//                    if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-//                    {
-//                      Error_Handler();
-//                    }
-//                  }
-                }
-     	    }//FREESMARTEEG_OPENVIBE_FREEEEG32_UART7_SAI2B_TIMER
-
-
-       }
-    }
 
 
     //  if(0)
@@ -5633,6 +3908,11 @@ int main(void)
       int telnet_packet_data_number_now = 0;
 
       long data_counter=0;
+      long data_counter1=0;
+      long data_counter2=0;
+      long data_counter3=0;
+      long data_counter4=0;
+      long data_counter5=0;
       long stable_crc[uint8_ad_adc_number][8/2]={{0,0,0,0},{0,0,0,0},{0,0,0,0},{0,0,0,0}};
 
   //    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
@@ -5645,6 +3925,9 @@ int main(void)
 
       int ad_adc1=0;
 
+      adc_channel_data DataStruct;
+      adc_channel_data DataStructs[uint8_ad_adc_number];
+
 
 
       if(1)
@@ -5654,6 +3937,434 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+        if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_TEST_INT)
+        {
+            if(flag_nDRDY_INTERRUPT)
+            {
+              	flag_nDRDY_INTERRUPT=false;
+
+//        	waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//            {
+
+//            readData(devices[ad_adc], &DataStruct);
+
+                if(data_counter%250==0)
+    //        if(test_counter%10000<5000)
+                {
+                    print_hex(data_counter1-data_counter2, 32);
+                	data_counter2=data_counter1;
+                    print_symbol(';');
+                    print_hex(data_counter, 32);
+                    print_symbol(';');
+                    print_line();
+  //            print7_hex(test_counter, 32);
+  //            print7_symbol(';');
+    //        print2_hex(test_counter, 32);
+    //        print2_symbol(';');
+                }
+                data_counter++;
+            }
+            data_counter1++;
+        }
+
+        if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_TEST_REGISTERS_INT)
+        {
+            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+            {
+            	if(0)
+            	{
+                    writeSingleRegister(devices[ad_adc], CLOCK_ADDRESS, (CLOCK_DEFAULT
+                    		& ~CLOCK_OSR_MASK
+                			& ~CLOCK_XTAL_DIS_MASK
+                			& ~CLOCK_EXTREF_EN_MASK)
+                    		| CLOCK_OSR_16384
+                			| CLOCK_XTAL_DIS_DISABLED
+                			| CLOCK_EXTREF_EN_ENABLED);
+
+                    writeSingleRegister(devices[ad_adc], GAIN1_ADDRESS, (GAIN1_DEFAULT
+                    		& ~GAIN1_PGAGAIN3_MASK
+                			& ~GAIN1_PGAGAIN2_MASK
+                			& ~GAIN1_PGAGAIN1_MASK
+                			& ~GAIN1_PGAGAIN0_MASK)
+                    		| GAIN1_PGAGAIN3_128
+                			| GAIN1_PGAGAIN2_128
+                			| GAIN1_PGAGAIN1_128
+                			| GAIN1_PGAGAIN0_128);
+                    writeSingleRegister(devices[ad_adc], GAIN2_ADDRESS, (GAIN2_DEFAULT
+                    		& ~GAIN2_PGAGAIN7_MASK
+                			& ~GAIN2_PGAGAIN6_MASK
+                			& ~GAIN2_PGAGAIN5_MASK
+                			& ~GAIN2_PGAGAIN4_MASK)
+                    		| GAIN2_PGAGAIN7_128
+                			| GAIN2_PGAGAIN6_128
+                			| GAIN2_PGAGAIN5_128
+                			| GAIN2_PGAGAIN4_128);
+
+                    writeSingleRegister(devices[ad_adc], CH0_CFG_ADDRESS, (CH0_CFG_DEFAULT & ~CH0_CFG_MUX0_MASK) | CH0_CFG_MUX0_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH1_CFG_ADDRESS, (CH1_CFG_DEFAULT & ~CH1_CFG_MUX1_MASK) | CH1_CFG_MUX1_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH2_CFG_ADDRESS, (CH2_CFG_DEFAULT & ~CH2_CFG_MUX2_MASK) | CH2_CFG_MUX2_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH3_CFG_ADDRESS, (CH3_CFG_DEFAULT & ~CH3_CFG_MUX3_MASK) | CH3_CFG_MUX3_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH4_CFG_ADDRESS, (CH4_CFG_DEFAULT & ~CH4_CFG_MUX4_MASK) | CH4_CFG_MUX4_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH5_CFG_ADDRESS, (CH5_CFG_DEFAULT & ~CH5_CFG_MUX5_MASK) | CH5_CFG_MUX5_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH6_CFG_ADDRESS, (CH6_CFG_DEFAULT & ~CH6_CFG_MUX6_MASK) | CH6_CFG_MUX6_ADC_INPUT_SHORT);
+                    writeSingleRegister(devices[ad_adc], CH7_CFG_ADDRESS, (CH7_CFG_DEFAULT & ~CH7_CFG_MUX7_MASK) | CH7_CFG_MUX7_ADC_INPUT_SHORT);
+            	}
+
+            	int address = readSingleRegister(devices[ad_adc], ID_ADDRESS);
+              print_binary(address, 16);
+              print_symbol(';');
+    //          print_symbol(';');
+    //          print_hex(address, 8);          print_symbol(';');          print_symbol(';');
+              int status = readSingleRegister(devices[ad_adc], STATUS_ADDRESS);
+              print_binary(status, 16);
+              print_symbol(';');
+              print_symbol(';');
+    //          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
+              int clock = readSingleRegister(devices[ad_adc], CLOCK_ADDRESS);
+              print_binary(clock, 16);
+              print_symbol(';');
+              print_symbol(';');
+    //          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
+            }
+              print_line();
+
+////        	waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//            {
+//
+////            readData(devices[ad_adc], &DataStruct);
+//
+////            if(test_counter%1000000==0)
+//    //        if(test_counter%10000<5000)
+////            {
+//              print_hex(data_counter, 32);
+//              print_symbol(';');
+//  //            print7_hex(test_counter, 32);
+//  //            print7_symbol(';');
+//    //        print2_hex(test_counter, 32);
+//    //        print2_symbol(';');
+//            }
+//            data_counter++;
+        }
+
+      if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT)
+//          if(readSingleRegister(devices[3], STATUS_ADDRESS)&STATUS_DRDY0_MASK==STATUS_DRDY0_NEW_DATA)
+//          if(SPI_RxCplt)
+          if(flag_nDRDY_INTERRUPT)
+//          for(int i = 0; i < 2; i ++)
+      {
+            	flag_nDRDY_INTERRUPT=false;
+//  		toggleRESET(devices[0]);
+//		toggleRESET(devices[1]);
+//		toggleRESET(devices[2]);
+//		toggleRESET(devices[3]);
+
+//          waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
+
+//          writeSingleRegister(dev, MODE_ADDRESS, MODE_DEFAULT);
+
+
+//          	SPI_RxCplt=0;
+
+//              int crc_pair_ok[uint8_ad_adc_number][4];
+
+
+//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+//                  print7_symbol(';');
+
+//          numFrameWords = 10;
+//          uint32_t spiDummyWord_out[numFrameWords];
+//          // Number of words in a full ADS131M08 SPI frame
+//          uint32_t spiDummyWord_in[numFrameWords] =
+//          {
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000,
+//          0x00000000};
+//          // Dummy word frame to write ADC during ADC data reads
+          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+          {
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+//              if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, spiDummyWord_in, spiDummyWord_out, numFrameWords*4,5000) != HAL_OK)
+//    //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+//              {
+//                Error_Handler();
+//              }
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+
+        	  addata24s[ad_adc].b0=0;
+        	  addata24s[ad_adc].b1=0;
+        	  addata24s[ad_adc].b2=0;
+              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+            {
+                datas[ad_adc][ad_data_channel * 4 + 0]=0;
+                datas[ad_adc][ad_data_channel * 4 + 1]=0;
+                datas[ad_adc][ad_data_channel * 4 + 2]=0;
+                datas[ad_adc][ad_data_channel * 4 + 3]=0;
+
+            	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
+            	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
+            	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+
+            }
+        	  addata24s[ad_adc].b3=0;
+        	  addata24s[ad_adc].b4=0;
+        	  addata24s[ad_adc].b5=0;
+        	  addata24s[ad_adc].b6=0;
+        	  addata24s[ad_adc].b7=0;
+            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+            {
+            }
+        	if(SPI_NSS_SOFTWARE)
+        	{
+        	    setCS(&devices[ad_adc]->spi_dev, LOW);
+        	}
+            if(SPI_DMA)
+            {
+//                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+                {
+                  Error_Handler();
+                }
+            } else {
+//                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
+                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+                {
+                  Error_Handler();
+                }
+            }
+            	if(SPI_NSS_SOFTWARE)
+            	{
+            	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+            	}
+            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+            {
+            }
+          }
+
+
+//              int ad_adc = 2;
+          //          for(int ad_adc = 0; ad_adc < 2; ad_adc ++)
+              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+        {
+//          readData(devices[ad_adc], &(DataStructs[ad_adc]));
+//      	  datas[ad_adc][ad_data_channel * 4 + 0]=&DataStructs[ad_adc].channel0;
+
+//                  print_binary(addata24s[ad_adc].b0, 8);//          print2_symbol(';');
+//                  print_binary(addata24s[ad_adc].b1, 8);//          print2_symbol(';');
+//                  print_symbol(';');
+//                  print_symbol(';');
+
+                  for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+          {
+//              print_hex((&(DataStructs[ad_adc].channel0))[ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//              print_hex((&(DataStructs[ad_adc].channel0))[ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+//              print_hex((&(DataStructs[ad_adc].channel0))[ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+//              print_hex((&(DataStructs[ad_adc].channel0))[ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//              print_binary((&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//              print_binary((&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+//              print_binary((&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+//              print_binary((&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+
+                	  print_hex(addata24s[ad_adc].datas[ad_data_channel][0], 8);//          print2_symbol(';');
+                	  print_hex(addata24s[ad_adc].datas[ad_data_channel][1], 8);//          print2_symbol(';');
+                	  print_hex(addata24s[ad_adc].datas[ad_data_channel][2], 8);//          print2_symbol(';');
+//              print_binary(addata24s[ad_adc].datas[ad_data_channel][0], 8);//          print2_symbol(';');
+//              print_binary(addata24s[ad_adc].datas[ad_data_channel][1], 8);//          print2_symbol(';');
+//              print_binary(addata24s[ad_adc].datas[ad_data_channel][2], 8);//          print2_symbol(';');
+
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+            print_symbol(';');
+          }
+//                  print_symbol(';');
+//                  print_binary(addata24s[ad_adc].b2, 8);//          print2_symbol(';');
+//                  print_binary(addata24s[ad_adc].b3, 8);//          print2_symbol(';');
+//                  print_binary(addata24s[ad_adc].b4, 8);//          print2_symbol(';');
+//                  print_binary(addata24s[ad_adc].b5, 8);//          print2_symbol(';');
+//                  print_binary(addata24s[ad_adc].b6, 8);//          print2_symbol(';');
+
+          print_symbol(';');
+//          print_line();
+        }
+        print_symbol(';');
+
+        print_line();
+
+      }//FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT
+
+      if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT)
+//            if(0)//openbci
+    	  //          if(SPI_RxCplt)
+    	            if(flag_nDRDY_INTERRUPT)
+//    	                if((readSingleRegister(devices[3], STATUS_ADDRESS)&STATUS_DRDY0_MASK)==STATUS_DRDY0_NEW_DATA)
+      {
+    	            	flag_nDRDY_INTERRUPT=false;
+
+
+
+//          waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
+//    	  {
+//    		  uint32_t timeout_ms=5000;
+//    		    // Convert ms to a # of loop iterations, OR even better use a timer here...
+//    		    uint32_t timeout = timeout_ms * 6000;   // convert to # of loop iterations
+//
+//    		    // Reset interrupt flag
+//    		    flag_nDRDY_INTERRUPT = false;
+//
+//    		    // Enable interrupts
+//    		//    IntMasterEnable();
+//
+//    		    // Wait for nDRDY interrupt or timeout - each iteration is about 20 ticks
+//    		    do {
+//    		        timeout--;
+//    		    } while (!flag_nDRDY_INTERRUPT && (timeout > 0));
+//
+//    		    // Reset interrupt flag
+//    		    flag_nDRDY_INTERRUPT = false;
+//    	  }
+//          	SPI_RxCplt=0;
+
+          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+          {
+        	  addata24s[ad_adc].b0=0;
+        	  addata24s[ad_adc].b1=0;
+        	  addata24s[ad_adc].b2=0;
+              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+            {
+            	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
+            	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
+            	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+            }
+        	  addata24s[ad_adc].b3=0;
+        	  addata24s[ad_adc].b4=0;
+        	  addata24s[ad_adc].b5=0;
+        	  addata24s[ad_adc].b6=0;
+        	  addata24s[ad_adc].b7=0;
+          	if(SPI_NSS_SOFTWARE)
+          	{
+          	    setCS(&devices[ad_adc]->spi_dev, LOW);
+          	}
+              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+              {
+              }
+              if(SPI_DMA)
+              {
+  //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+                  if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+                  {
+                    Error_Handler();
+                  }
+              } else {
+  //                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
+                  if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+                  {
+                    Error_Handler();
+                  }
+              }
+              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+              {
+              }
+              	if(SPI_NSS_SOFTWARE)
+              	{
+              	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+              	}
+          }
+
+//        ui32SampleNumber++;
+        if(1)
+//        if(ui32SampleNumber%250)
+//            for(int i = 0; i < 2; i ++)
+        {
+//            const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
+//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
+            const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+//          uint8_t dataBuffer[uint8_data_number];
+
+          dataBuffer_print[0] = 0xA0;
+          dataBuffer_print[1] = ui8SampleNumber++;
+
+          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+          {
+//              readData(devices[ad_adc], &DataStructs[ad_adc]);
+//          	  datas[ad_adc][ad_data_channel * 4 + 0]=&DataStructs[ad_adc].channel0;
+            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+            {
+                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = addata24s[ad_adc].datas[ad_data_channel][0];
+                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = addata24s[ad_adc].datas[ad_data_channel][1];
+                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = addata24s[ad_adc].datas[ad_data_channel][2];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = (&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 1];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = (&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 2];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = (&DataStructs[ad_adc].channel0)[ad_data_channel * 4 + 3];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
+//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
+            }
+          }
+          for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
+//                for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
+          {
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
+          }
+//          dataBuffer_print[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
+//            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
+
+                      if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
+                      {
+                          while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
+                          {
+                          }
+                          if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint8_data_number) != HAL_OK)
+                          {
+                            Error_Handler();
+                          }
+                      }
+                      if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+                      {
+                          CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint8_data_number);
+                      }
+
+//          if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
+//          {
+//            while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
+//            {
+//            }
+//            if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
+//            {
+//              Error_Handler();
+//            }
+//          }
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
+//            {
+//              while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
+//              {
+//              }
+//              if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
+//              {
+//                Error_Handler();
+//              }
+//            }
+        }
+
+
+      }//FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT
+//        print7_text_line(".");
 
 
         if(FREESMARTEEG_OUT & FREESMARTEEG_DATA_TEXT_UART7_INT)
@@ -5751,190 +4462,142 @@ int main(void)
 //        print7_text_line(".");
 
 
-        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_UART7_INT_DMA)
-            if(SAI_RxCplt)
-        {
-            	SAI_RxCplt=0;
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-//                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                int ad_adc = 0;
-//                int ad_adc = 1;
-          {
-            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-                      print_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-                      print_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-                      print_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-                      print_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-              print_symbol(';');
-            }
-            print_symbol(';');
-          }
-          print_symbol(';');
-
-          print_line();
-
-        }//FREESMARTEEG_SAI_TEXT_UART7_INT_DMA
-
-        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_UART7_INT)
-            if(SAI_RxCplt)
-        {
-
-//	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
+//        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_UART7_INT_DMA)
+//            if(SAI_RxCplt)
+//        {
+//            	SAI_RxCplt=0;
 //
-//	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
+////              int crc_pair_ok[uint8_ad_adc_number][4];
 //
-//	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
 //
-//	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
-
-	            	SAI_RxCplt=0;
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-//                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                int ad_adc = 0;
-//                int ad_adc = 1;
-          {
-            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-                print_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-                print_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-                print_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-                print_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-              print_symbol(';');
-            }
-            print_symbol(';');
-          }
-          print_symbol(';');
-
-          print_line();
-
-        }//FREESMARTEEG_SAI_TEXT_UART7_INT
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_INT)
-        {
-
-//	      if((SAI_RxStart < 10) && (SAI_RxStart > 0))
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+////                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                int ad_adc = 0;
+////                int ad_adc = 1;
+//          {
+//            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+//                      print_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+//              print_symbol(';');
+//            }
+//            print_symbol(';');
+//          }
+//          print_symbol(';');
+//
+//          print_line();
+//
+//        }//FREESMARTEEG_SAI_TEXT_UART7_INT_DMA
+//
+//        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_TEXT_UART7_INT)
+//            if(SAI_RxCplt)
+//        {
+//
+////	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+//
+//	            	SAI_RxCplt=0;
+//
+////              int crc_pair_ok[uint8_ad_adc_number][4];
+//
+//
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+////                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                int ad_adc = 0;
+////                int ad_adc = 1;
+//          {
+//            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+//                print_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//                print_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+//                print_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+//                print_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+//              print_symbol(';');
+//            }
+//            print_symbol(';');
+//          }
+//          print_symbol(';');
+//
+//          print_line();
+//
+//        }//FREESMARTEEG_SAI_TEXT_UART7_INT
+//
+//        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_INT)
+//        {
+//
+////	      if((SAI_RxStart < 10) && (SAI_RxStart > 0))
+////	      {
+////		    	SAI_RxStart = SAI_RxStart + 1;
+////	      } else
+//	      if(SAI_RxStart)
 //	      {
-//		    	SAI_RxStart = SAI_RxStart + 1;
-//	      } else
-	      if(SAI_RxStart)
-	      {
-	    	 SAI_RxStart = 0;
-	       if(SAI_DMA)
-	        {
-	         if(SAI_DMA_INT_SHIFT)
-	    	  {
-	        	 HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-	        	 HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-	        	 HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-	        	 HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-
-
-	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-            	SAI_RxCplt=1;
-	          }
-	         else
-	         {
-	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
-	              {
-	              }
-
-           	SAI_RxCplt=1;
-
-	         }
-	        }
-	      }
-	    }
-
-
-        if(FREEEEG32_OUT & FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT)
-//            if(SAI1A_RxCplt && SAI1B_RxCplt && SAI2A_RxCplt && SAI2B_RxCplt)
-            if(SAI_RxCplt)
-        {
+//	    	 SAI_RxStart = 0;
+//	       if(SAI_DMA)
+//	        {
+//	         if(SAI_DMA_INT_SHIFT)
+//	    	  {
+//	        	 HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
+//	        	 HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
+//	        	 HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
+//	        	 HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
+//
+//
 //	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
 //	              {
 //	              }
@@ -5950,425 +4613,473 @@ int main(void)
 //	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
 //	              {
 //	              }
-
-            	SAI1A_RxCplt = 0;
-            	SAI1B_RxCplt = 0;
-            	SAI2A_RxCplt = 0;
-            	SAI2B_RxCplt = 0;
-            	SAI_RxCplt=0;
-        	    if(!SAI_DMA)
-        	    {
-        	    	HAL_SAI_Receive(&hsai_BlockB2, datas[0], SAI_DATASIZE_32, 10);
-//        	    	HAL_SAI_Receive(&hsai_BlockA1, datas[1], SAI_DATASIZE_32, 5000);
-//        	    	HAL_SAI_Receive(&hsai_BlockB1, datas[2], SAI_DATASIZE_32, 5000);
-//        	    	HAL_SAI_Receive(&hsai_BlockA2, datas[3], SAI_DATASIZE_32, 5000);
-        	    }
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-                duplicates_count = duplicates_count + 1;
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-//                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                int ad_adc = 0;
-//                int ad_adc = 1;
-          {
-            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
+//
+//            	SAI_RxCplt=1;
+//	          }
+//	         else
+//	         {
+//	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
+//	              {
+//	              }
+//
+//	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
+//	              {
+//	              }
+//
+//	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
+//	              {
+//	              }
+//
+//	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
+//	              {
+//	              }
+//
+//           	SAI_RxCplt=1;
+//
+//	         }
+//	        }
+//	      }
+//	    }
+//
+//
+//        if(FREEEEG32_OUT & FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT)
+////            if(SAI1A_RxCplt && SAI1B_RxCplt && SAI2A_RxCplt && SAI2B_RxCplt)
+//            if(SAI_RxCplt)
+//        {
+////	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+////
+////	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
+////	              {
+////	              }
+//
+//            	SAI1A_RxCplt = 0;
+//            	SAI1B_RxCplt = 0;
+//            	SAI2A_RxCplt = 0;
+//            	SAI2B_RxCplt = 0;
+//            	SAI_RxCplt=0;
+//        	    if(!SAI_DMA)
+//        	    {
+//        	    	HAL_SAI_Receive(&hsai_BlockB2, datas[0], SAI_DATASIZE_32, 10);
+////        	    	HAL_SAI_Receive(&hsai_BlockA1, datas[1], SAI_DATASIZE_32, 5000);
+////        	    	HAL_SAI_Receive(&hsai_BlockB1, datas[2], SAI_DATASIZE_32, 5000);
+////        	    	HAL_SAI_Receive(&hsai_BlockA2, datas[3], SAI_DATASIZE_32, 5000);
+//        	    }
+//
+////              int crc_pair_ok[uint8_ad_adc_number][4];
+//
+//                duplicates_count = duplicates_count + 1;
+//
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+////                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                int ad_adc = 0;
+////                int ad_adc = 1;
+//          {
+//            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                if((ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] == ovdata.datas[ad_adc][ad_data_channel * 4 + 3])
+////                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] == ovdata.datas[ad_adc][ad_data_channel * 4 + 2])
+////                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] == ovdata.datas[ad_adc][ad_data_channel * 4 + 1])
+////                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] == ovdata.datas[ad_adc][ad_data_channel * 4 + 0]))
+//                if((ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] == datas[ad_adc][ad_data_channel * 4 + 3])
+//                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] == datas[ad_adc][ad_data_channel * 4 + 2])
+//                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] == datas[ad_adc][ad_data_channel * 4 + 1])
+//                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] == datas[ad_adc][ad_data_channel * 4 + 0]))
+//                {
+//                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
+//                }
+//                else
+//                {
+//                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                }
+//
+//                if(duplicates_count == 1)
+//                {
+//                	ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                }
+//                if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 2 == 1)
+//                {
+//                	ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] + 1;
+////                    if((ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 4 == 1)
+////                    		&& (ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 3))
+//                    if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 3)
+//                    {
+//                    	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
+//                    }
+////                    if((ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 6 == 1)
+////                    		&& (ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 5))
+//                    if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 5)
+//                    {
+//                    	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] + 1;
+//                    }
+//                }
+////            	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] + ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0];
+//                if(duplicates_count == duplicates_count_max)
+//                {
+////                	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] - ovdata3.datas[ad_adc][ad_data_channel * 4 + 0];
+//                    print_hex(ovdata3.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                    print_hex(ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                    print_hex(ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//                    print_symbol(';');
+//                }
+//
+//
+//
+////                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] = ovdata.datas[ad_adc][ad_data_channel * 4 + 3];
+////                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
+////                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
+////                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
+//
+//                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] = datas[ad_adc][ad_data_channel * 4 + 3];
+//                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] = datas[ad_adc][ad_data_channel * 4 + 2];
+//                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
+//                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] = datas[ad_adc][ad_data_channel * 4 + 0];
+//
+//            }
+//            if(duplicates_count == duplicates_count_max)
+//            {
+//                print_symbol(';');
+//            }
+//          }
+//          if(duplicates_count == duplicates_count_max)
+//          {
+//        	  duplicates_count = 0;
+//              print_symbol(';');
+//
+//              print_line();
+//          }
+//
+//        }//FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT
+//
+//        if(FREEEEG32_OUT & FREEEEG32_SAI_TEST_DUPLICATES_INT)
+//            if(SAI_RxCplt)
+//        {
+//            	SAI_RxCplt=0;
+//
+////              int crc_pair_ok[uint8_ad_adc_number][4];
+//
+//
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+////                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                int ad_adc = 0;
+////                int ad_adc = 1;
+//          {
+//            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
 //                if((ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] == ovdata.datas[ad_adc][ad_data_channel * 4 + 3])
 //                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] == ovdata.datas[ad_adc][ad_data_channel * 4 + 2])
 //                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] == ovdata.datas[ad_adc][ad_data_channel * 4 + 1])
 //                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] == ovdata.datas[ad_adc][ad_data_channel * 4 + 0]))
-                if((ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] == datas[ad_adc][ad_data_channel * 4 + 3])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] == datas[ad_adc][ad_data_channel * 4 + 2])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] == datas[ad_adc][ad_data_channel * 4 + 1])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] == datas[ad_adc][ad_data_channel * 4 + 0]))
-                {
-                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
-                }
-                else
-                {
-                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
-                }
-
-                if(duplicates_count == 1)
-                {
-                	ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] = 0;
-                	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
-                	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = 0;
-                }
-                if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 2 == 1)
-                {
-                	ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas[ad_adc][ad_data_channel * 4 + 0] + 1;
-//                    if((ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 4 == 1)
-//                    		&& (ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 3))
-                    if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 3)
-                    {
-                    	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
-                    }
-//                    if((ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] % 6 == 1)
-//                    		&& (ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 5))
-                    if(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] >= 5)
-                    {
-                    	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] + 1;
-                    }
-                }
-//            	ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] + ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0];
-                if(duplicates_count == duplicates_count_max)
-                {
-//                	ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0] = ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0] - ovdata3.datas[ad_adc][ad_data_channel * 4 + 0];
-                    print_hex(ovdata3.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                    print_hex(ovdata3.datas2[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                    print_hex(ovdata3.datas3[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-                    print_symbol(';');
-                }
-
-
-
+//                {
+//                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
+//                }
+//                else
+//                {
+//                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                }
+//
+//                print_hex(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+//
 //                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] = ovdata.datas[ad_adc][ad_data_channel * 4 + 3];
 //                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
 //                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
 //                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
-
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] = datas[ad_adc][ad_data_channel * 4 + 3];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] = datas[ad_adc][ad_data_channel * 4 + 2];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] = datas[ad_adc][ad_data_channel * 4 + 0];
-
-            }
-            if(duplicates_count == duplicates_count_max)
-            {
-                print_symbol(';');
-            }
-          }
-          if(duplicates_count == duplicates_count_max)
-          {
-        	  duplicates_count = 0;
-              print_symbol(';');
-
-              print_line();
-          }
-
-        }//FREEEEG32_SAI_TEST_DUPLICATES_COUNT_INT
-
-        if(FREEEEG32_OUT & FREEEEG32_SAI_TEST_DUPLICATES_INT)
-            if(SAI_RxCplt)
-        {
-            	SAI_RxCplt=0;
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-//                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                int ad_adc = 0;
-//                int ad_adc = 1;
-          {
-            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
+//
+//
+//              print_symbol(';');
+//            }
+//            print_symbol(';');
+//          }
+//          print_symbol(';');
+//
+//          print_line();
+//
+//        }//FREEEEG32_SAI_TEST_DUPLICATES_INT
+//
+//        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT)
+////            if(0)//openbci
+//            if(SAI_RxCplt)
+//        {
+//            	SAI_RxCplt=0;
+//
+//          if(1)
+////        	  if((ui8SampleNumber2++)%2==0)
+//          {
+//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+////              uint8_t dataBuffer[uint8_data_number];
+//
+//            dataBuffer_print[0] = 0xA0;
+//            dataBuffer_print[1] = ui8SampleNumber++;
+//
+////            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//            {
+////                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
+//              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//              {
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
+//
+//                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 2];
+//                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
+//                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 0];
+//
+////                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
+////                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
+////                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
+//              }
+//            }
+////            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
+////            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
+//            for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
+//            {
+//              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
+//              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
+//            }
+////            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
+//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
+//
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
+//            {
+//              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
+//              {
+//              }
+//              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint8_data_number) != HAL_OK)
+//              {
+//                Error_Handler();
+//              }
+//            }
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
+//            {
+//                CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint8_data_number);
+//            }
+//
+////            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
+////            {
+////              while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
+////              {
+////              }
+////              if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
+////              {
+////                Error_Handler();
+////              }
+////            }
+//          }
+//
+//
+//        }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT
+//
+//
+//
+//        if(FREEEEG32_OUT & FREEEEG32_SAI_SDCARD_TEXT_UART7_INT)
+//            if(SAI_RxCplt)
+//        {
+//            	SAI_RxCplt=0;
+//
+////              int crc_pair_ok[uint8_ad_adc_number][4];
+//
+//
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+////                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+////                int ad_adc = 0;
+////                int ad_adc = 1;
+//          {
+//            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+//
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
+////                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
+//
 //                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
 //                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
 //                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
 //                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-                if((ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] == ovdata.datas[ad_adc][ad_data_channel * 4 + 3])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] == ovdata.datas[ad_adc][ad_data_channel * 4 + 2])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] == ovdata.datas[ad_adc][ad_data_channel * 4 + 1])
-                  && (ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] == ovdata.datas[ad_adc][ad_data_channel * 4 + 0]))
-                {
-                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] + 1;
-                }
-                else
-                {
-                	ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0] = 0;
-                }
-
-                print_hex(ovdata2.datas2[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 3] = ovdata.datas[ad_adc][ad_data_channel * 4 + 3];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
-                      ovdata2.datas[ad_adc][ad_data_channel * 4 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
-
-
-              print_symbol(';');
-            }
-            print_symbol(';');
-          }
-          print_symbol(';');
-
-          print_line();
-
-        }//FREEEEG32_SAI_TEST_DUPLICATES_INT
-
-        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT)
-//            if(0)//openbci
-            if(SAI_RxCplt)
-        {
-            	SAI_RxCplt=0;
-
-          if(1)
-//        	  if((ui8SampleNumber2++)%2==0)
-          {
-              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-//              uint8_t dataBuffer[uint8_data_number];
-
-            dataBuffer_print[0] = 0xA0;
-            dataBuffer_print[1] = ui8SampleNumber++;
-
-//            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-//                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
-              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-              {
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-
-                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 2];
-                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 1];
-                  dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 0];
-
+//
+//              print_symbol(';');
+//            }
+//            print_symbol(';');
+//          }
+//          print_symbol(';');
+//
+//          print_line();
+//
+//        }//FREEEEG32_SAI_SDCARD_TEXT_UART7_INT
+//
+//        if(FREEEEG32_OUT & FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT)
+////            if(0)//openbci
+//            if(SAI_RxCplt)
+//        {
+//            	SAI_RxCplt=0;
+//
+//          if(1)
+//          {
+//              const uint32_t uint32_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+//              UINT uint_data_number_written;
+//
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
+////              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+////              uint8_t dataBuffer[uint8_data_number];
+//
+//            dataBuffer_print[0] = 0xA0;
+//            dataBuffer_print[1] = ui8SampleNumber++;
+//
+////            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
+//            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//            {
+////                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
+//              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//              {
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
+////                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
+//
 //                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
 //                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
 //                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
-              }
-            }
-//            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
-//            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
-            for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-            {
-              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-            }
-//            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-            {
-              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-              {
-              }
-              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint8_data_number) != HAL_OK)
-              {
-                Error_Handler();
-              }
-            }
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
-            {
-                CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint8_data_number);
-            }
-
-//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
+//              }
+//            }
+////            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
+////            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
+//            for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
 //            {
-//              while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
+//              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
+//              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
+//            }
+////            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
+////            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
+//            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
+//
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
+//            {
+//              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
 //              {
 //              }
-//              if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
+//              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint32_data_number) != HAL_OK)
 //              {
 //                Error_Handler();
 //              }
 //            }
-          }
-
-
-        }//FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT
-
-
-
-        if(FREEEEG32_OUT & FREEEEG32_SAI_SDCARD_TEXT_UART7_INT)
-            if(SAI_RxCplt)
-        {
-            	SAI_RxCplt=0;
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-//                for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-                    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//                int ad_adc = 0;
-//                int ad_adc = 1;
-          {
-            for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-
-                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-                      print_hex(ovdata.datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-
-              print_symbol(';');
-            }
-            print_symbol(';');
-          }
-          print_symbol(';');
-
-          print_line();
-
-        }//FREEEEG32_SAI_SDCARD_TEXT_UART7_INT
-
-        if(FREEEEG32_OUT & FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT)
-//            if(0)//openbci
-            if(SAI_RxCplt)
-        {
-            	SAI_RxCplt=0;
-
-          if(1)
-          {
-              const uint32_t uint32_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-              UINT uint_data_number_written;
-
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 1 * 2 + 1;
-//              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
-//              uint8_t dataBuffer[uint8_data_number];
-
-            dataBuffer_print[0] = 0xA0;
-            dataBuffer_print[1] = ui8SampleNumber++;
-
-//            for(int ad_adc = 0; ad_adc < 1; ad_adc ++)
-            for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-            {
-//                for(int ad_data_channel = 0; ad_data_channel < 1; ad_data_channel ++)
-              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-              {
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = datas[ad_adc][ad_data_channel * 4 + 1];
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = datas[ad_adc][ad_data_channel * 4 + 2];
-//                dataBuffer[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = datas[ad_adc][ad_data_channel * 4 + 3];
-
-                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 0] = ovdata.datas[ad_adc][ad_data_channel * 4 + 2];
-                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 1] = ovdata.datas[ad_adc][ad_data_channel * 4 + 1];
-                dataBuffer_print[2 + uint8_ad_chan_number * 3 * ad_adc + ad_data_channel * 3 + 2] = ovdata.datas[ad_adc][ad_data_channel * 4 + 0];
-              }
-            }
-//            for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
-//            for(int accel_data_channel = 0; accel_data_channel < 1; accel_data_channel ++)
-            for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
-            {
-              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-              dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
-            }
-//            dataBuffer[2 + uint8_ad_chan_number * 3 * 1 + 0 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + 1 * 3 * 1 + 1 * 2 + 0] = 0xC0;
-//            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
-
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-            {
-              while (HAL_UART_GetState(&huart1) != HAL_UART_STATE_READY)
-              {
-              }
-              if(HAL_UART_Transmit_DMA(&huart1, (uint8_t*)dataBuffer_print, uint32_data_number) != HAL_OK)
-              {
-                Error_Handler();
-              }
-            }
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
-            {
-                CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
-            }
-
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
-            {
-
-//        		  UART_Printf("4");
-            	if((retSD = f_write (&SDFile, dataBuffer_print, uint32_data_number, &uint_data_number_written)) == FR_OK)
-            	  {
-//          		  UART_Printf("5");
-            	  } else {
-              		  UART_Printf("can't write to SDFile\r\n");
-            	  }
-          	  if((retSD = f_sync (&SDFile)) == FR_OK)
-          	  {
-        		  UART_Printf("6");
-          	  } else {
-          		  UART_Printf("can't sync to SDFile\r\n");
-          	  }
-
-            }
-
-//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
 //            {
-//              while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
-//              {
-//              }
-//              if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
-//              {
-//                Error_Handler();
-//              }
+//                CDC_Transmit_HS((uint8_t*)dataBuffer_print, uint32_data_number);
 //            }
-          }
-
-
-        }//FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT
+//
+//            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_SD)
+//            {
+//
+////        		  UART_Printf("4");
+//            	if((retSD = f_write (&SDFile, dataBuffer_print, uint32_data_number, &uint_data_number_written)) == FR_OK)
+//            	  {
+////          		  UART_Printf("5");
+//            	  } else {
+//              		  UART_Printf("can't write to SDFile\r\n");
+//            	  }
+//          	  if((retSD = f_sync (&SDFile)) == FR_OK)
+//          	  {
+//        		  UART_Printf("6");
+//          	  } else {
+//          		  UART_Printf("can't sync to SDFile\r\n");
+//          	  }
+//
+//            }
+//
+////            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART7)
+////            {
+////              while (HAL_UART_GetState(&huart7) != HAL_UART_STATE_READY)
+////              {
+////              }
+////              if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer, uint8_data_number) != HAL_OK)
+////              {
+////                Error_Handler();
+////              }
+////            }
+//          }
+//
+//
+//        }//FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT
 
 
 
@@ -6814,50 +5525,50 @@ int main(void)
 
         //    data[0] = AD7779_REG_GENERAL_USER_CONFIG_1;
         //    data[1] = 0;
-            if(0)
-            {
-              data1[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
-              data1[1] = AD7779_SPI_SLAVE_MODE_EN;
-          //    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-    //          HAL_SPI_Transmit(&hspi4, data1, 2, 5000);
-//              HAL_SPI_Transmit_DMA(&hspi4, data1, 2);
-          //    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-              data1[0] = AD7779_REG_GEN_ERR_REG_1_EN;
-              data1[1] = AD7779_SPI_CRC_TEST_EN;
-            //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-    //          HAL_SPI_Transmit(&hspi4, data1, 2, 5000);
-//              HAL_SPI_Transmit_DMA(&hspi4, data1, 2);
-            //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-            }
-
-            if(0)
-            {
-              int ad_adc = 3;
-    //          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-              {
-                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
-                aTxBuffer[1] = AD7779_SPI_SLAVE_MODE_EN;
-    //            aTxBuffer[0]=0x80;
-    //            aTxBuffer[1]=0x00;
-      //              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-      //              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
-      //                print2_symbol('1');
-      //                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
-      //                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
-      //              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-                {
-                  // Transfer error in transmission process
-                  Error_Handler();
-      //                  print2_symbol('?');
-                }
-                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-    //                while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY)
-                {
-                }
-              }
-
-            }
+//            if(0)
+//            {
+//              data1[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
+//              data1[1] = AD7779_SPI_SLAVE_MODE_EN;
+//          //    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+//    //          HAL_SPI_Transmit(&hspi4, data1, 2, 5000);
+////              HAL_SPI_Transmit_DMA(&hspi4, data1, 2);
+//          //    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//              data1[0] = AD7779_REG_GEN_ERR_REG_1_EN;
+//              data1[1] = AD7779_SPI_CRC_TEST_EN;
+//            //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+//    //          HAL_SPI_Transmit(&hspi4, data1, 2, 5000);
+////              HAL_SPI_Transmit_DMA(&hspi4, data1, 2);
+//            //  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//            }
+//
+//            if(0)
+//            {
+//              int ad_adc = 3;
+//    //          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//              {
+//                aTxBuffer[0] = AD7779_REG_GENERAL_USER_CONFIG_3;
+//                aTxBuffer[1] = AD7779_SPI_SLAVE_MODE_EN;
+//    //            aTxBuffer[0]=0x80;
+//    //            aTxBuffer[1]=0x00;
+//      //              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//      //              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
+//                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], 2) != HAL_OK)
+//      //                print2_symbol('1');
+//      //                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
+//      //                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
+//      //              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
+//                {
+//                  // Transfer error in transmission process
+//                  Error_Handler();
+//      //                  print2_symbol('?');
+//                }
+//                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//    //                while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY)
+//                {
+//                }
+//              }
+//
+//            }
 
         //    for(int ad_data_byte = 0; ad_data_byte < uint8_ad_number; ad_data_byte ++)
         //    {
@@ -6872,84 +5583,84 @@ int main(void)
 //            print7_symbol(';');
 //            print7_line();
 
-            if(FREESMARTEEG_OUT & FREESMARTEEG_DEVICES_STATE)
-            {
-              int ad_adc = 0;
-//              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-              {
-//                  data1[0] = 0x80 | AD7779_REG_CH_CONFIG(0);
-                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_1;
-//                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_2;
-//                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_3;
-//                  data1[0] = 0x80 | AD7779_REG_DOUT_FORMAT;
-//                  data1[0] = 0x80 | AD7779_REG_BUFFER_CONFIG_1;
-//                  data1[0] = 0x80 | AD7779_REG_BUFFER_CONFIG_2;
-//                  data1[0] = 0x80 | AD7779_REG_CHX_ERR_REG_EN;
-//                  data1[0] = 0x80 | AD7779_REG_CH_ERR_REG(0);
-//                  data1[0] = 0x80 | AD7779_REG_CH0_1_SAT_ERR;
-//                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_1_EN;
-//                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_1;
-//                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_2_EN;
-//                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_2;
-//                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_1;
-//                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_2;
-//                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_3;
-                data1[1] = 0;
-
-                print_binary(data1[0], 8);    print_symbol(';');
-                print_binary(data1[1], 8);    print_symbol(';');
-                print_symbol(';');
-//                print7_binary(data1[0], 8);    print7_symbol(';');
-//                print7_binary(data1[1], 8);    print7_symbol(';');
-//                print7_symbol(';');
-
-          //      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-      //         spi_write_and_read(0, data, 2);
-          //      spi_write_and_read(0, data, 2);
-//                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, data1, data1, 2,5000) != HAL_OK)
-
-                if(SPI_DMA)
-                {
-                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, data1, data1, 2) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                } else {
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, data1, data1, 2, 5000) != HAL_OK)
-                    {
-                      Error_Handler();
-                    }
-                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
-                }
-
-
-      //                print2_symbol('1');
-      //                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
-      //                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
-      //              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-      //                while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY)
-                {
-                }
-      //          HAL_SPI_TransmitReceive(&hspi1, data1, data1, 2, 5000);
-            //    HAL_SPI_Transmit(&hspi1, data, 2, 5000);
-          //      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-
-                print_binary(data1[0], 8);    print_symbol(';');
-                print_binary(data1[1], 8);    print_symbol(';');
-                print_symbol(';');
-                print_symbol(';');
-//                print7_binary(data1[0], 8);    print7_symbol(';');
-//                print7_binary(data1[1], 8);    print7_symbol(';');
-//                print7_symbol(';');
-//                print7_symbol(';');
-
-            //    print_line();
-              }
-              print_line();
-//              print7_line();
-            }
+//            if(FREESMARTEEG_OUT & FREESMARTEEG_DEVICES_STATE)
+//            {
+//              int ad_adc = 0;
+////              for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+//              {
+////                  data1[0] = 0x80 | AD7779_REG_CH_CONFIG(0);
+//                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_1;
+////                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_2;
+////                  data1[0] = 0x80 | AD7779_REG_GENERAL_USER_CONFIG_3;
+////                  data1[0] = 0x80 | AD7779_REG_DOUT_FORMAT;
+////                  data1[0] = 0x80 | AD7779_REG_BUFFER_CONFIG_1;
+////                  data1[0] = 0x80 | AD7779_REG_BUFFER_CONFIG_2;
+////                  data1[0] = 0x80 | AD7779_REG_CHX_ERR_REG_EN;
+////                  data1[0] = 0x80 | AD7779_REG_CH_ERR_REG(0);
+////                  data1[0] = 0x80 | AD7779_REG_CH0_1_SAT_ERR;
+////                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_1_EN;
+////                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_1;
+////                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_2_EN;
+////                  data1[0] = 0x80 | AD7779_REG_GEN_ERR_REG_2;
+////                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_1;
+////                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_2;
+////                  data1[0] = 0x80 | AD7779_REG_STATUS_REG_3;
+//                data1[1] = 0;
+//
+//                print_binary(data1[0], 8);    print_symbol(';');
+//                print_binary(data1[1], 8);    print_symbol(';');
+//                print_symbol(';');
+////                print7_binary(data1[0], 8);    print7_symbol(';');
+////                print7_binary(data1[1], 8);    print7_symbol(';');
+////                print7_symbol(';');
+//
+//          //      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+//      //         spi_write_and_read(0, data, 2);
+//          //      spi_write_and_read(0, data, 2);
+////                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, data1, data1, 2,5000) != HAL_OK)
+//
+//                if(SPI_DMA)
+//                {
+//                    if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, data1, data1, 2) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                } else {
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_RESET);
+//                    if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, data1, data1, 2, 5000) != HAL_OK)
+//                    {
+//                      Error_Handler();
+//                    }
+//                    HAL_GPIO_WritePin(devices[ad_adc]->spi_dev.chip_select_port, devices[ad_adc]->spi_dev.chip_select_pin, GPIO_PIN_SET);
+//                }
+//
+//
+//      //                print2_symbol('1');
+//      //                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
+//      //                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
+//      //              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
+//                while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//      //                while (HAL_SPI_GetState(&hspi1) != HAL_SPI_STATE_READY)
+//                {
+//                }
+//      //          HAL_SPI_TransmitReceive(&hspi1, data1, data1, 2, 5000);
+//            //    HAL_SPI_Transmit(&hspi1, data, 2, 5000);
+//          //      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//
+//                print_binary(data1[0], 8);    print_symbol(';');
+//                print_binary(data1[1], 8);    print_symbol(';');
+//                print_symbol(';');
+//                print_symbol(';');
+////                print7_binary(data1[0], 8);    print7_symbol(';');
+////                print7_binary(data1[1], 8);    print7_symbol(';');
+////                print7_symbol(';');
+////                print7_symbol(';');
+//
+//            //    print_line();
+//              }
+//              print_line();
+////              print7_line();
+//            }
 
         //    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
         //    HAL_Delay(50);
@@ -11973,7 +10684,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 1;
   RCC_OscInitStruct.PLL.PLLN = 19;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 20;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
   RCC_OscInitStruct.PLL.PLLR = 20;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_3;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOMEDIUM;
@@ -12004,23 +10715,22 @@ void SystemClock_Config(void)
                               |RCC_PERIPHCLK_SPI1|RCC_PERIPHCLK_SPI2
                               |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_I2C2
                               |RCC_PERIPHCLK_I2C1|RCC_PERIPHCLK_SPI6
-                              |RCC_PERIPHCLK_USB|RCC_PERIPHCLK_CKPER;
+                              |RCC_PERIPHCLK_USB;
   PeriphClkInitStruct.PLL2.PLL2M = 1;
-  PeriphClkInitStruct.PLL2.PLL2N = 18;
-  PeriphClkInitStruct.PLL2.PLL2P = 100;
-  PeriphClkInitStruct.PLL2.PLL2Q = 100;
-  PeriphClkInitStruct.PLL2.PLL2R = 2;
+  PeriphClkInitStruct.PLL2.PLL2N = 40;
+  PeriphClkInitStruct.PLL2.PLL2P = 10;
+  PeriphClkInitStruct.PLL2.PLL2Q = 10;
+  PeriphClkInitStruct.PLL2.PLL2R = 10;
   PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_3;
-  PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOMEDIUM;
-  PeriphClkInitStruct.PLL2.PLL2FRACN = 2544;
-  PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL2;
-  PeriphClkInitStruct.CkperClockSelection = RCC_CLKPSOURCE_HSE;
-  PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_CLKP;
-  PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_HSE;
+  PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
+  PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
+  PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
+  PeriphClkInitStruct.Spi123ClockSelection = RCC_SPI123CLKSOURCE_PLL2;
+  PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_PLL2;
   PeriphClkInitStruct.Usart16ClockSelection = RCC_USART16CLKSOURCE_HSI;
   PeriphClkInitStruct.I2c123ClockSelection = RCC_I2C123CLKSOURCE_HSI;
   PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
-  PeriphClkInitStruct.Spi6ClockSelection = RCC_SPI6CLKSOURCE_HSE;
+  PeriphClkInitStruct.Spi6ClockSelection = RCC_SPI6CLKSOURCE_PLL2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -12029,6 +10739,17 @@ void SystemClock_Config(void)
   /** Enable USB Voltage detector
   */
   HAL_PWREx_EnableUSBVoltageDetector();
+}
+
+/**
+  * @brief NVIC Configuration.
+  * @retval None
+  */
+static void MX_NVIC_Init(void)
+{
+  /* EXTI0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 }
 
 /**
@@ -12220,9 +10941,9 @@ static void MX_SPI2_Init(void)
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
   hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi2.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -12268,9 +10989,9 @@ static void MX_SPI3_Init(void)
   hspi3.Init.Direction = SPI_DIRECTION_2LINES;
   hspi3.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi3.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi3.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi3.Init.NSS = SPI_NSS_SOFT;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -12316,9 +11037,9 @@ static void MX_SPI4_Init(void)
   hspi4.Init.Direction = SPI_DIRECTION_2LINES;
   hspi4.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi4.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi4.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi4.Init.NSS = SPI_NSS_SOFT;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -12362,16 +11083,16 @@ static void MX_SPI5_Init(void)
   hspi5.Instance = SPI5;
   hspi5.Init.Mode = SPI_MODE_MASTER;
   hspi5.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi5.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi5.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi5.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi5.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi5.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi5.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi5.Init.NSS = SPI_NSS_SOFT;
+  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi5.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi5.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi5.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi5.Init.CRCPolynomial = 0x0;
-  hspi5.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi5.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   hspi5.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
   hspi5.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
   hspi5.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
@@ -12413,7 +11134,7 @@ static void MX_SPI6_Init(void)
   hspi6.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi6.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi6.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi6.Init.NSS = SPI_NSS_HARD_OUTPUT;
+  hspi6.Init.NSS = SPI_NSS_SOFT;
   hspi6.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
   hspi6.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi6.Init.TIMode = SPI_TIMODE_DISABLE;
@@ -12456,7 +11177,7 @@ static void MX_TIM1_Init(void)
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
-//
+////
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
@@ -12512,7 +11233,6 @@ static void MX_TIM8_Init(void)
 
   TIM_SlaveConfigTypeDef sSlaveConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
 
   /* USER CODE BEGIN TIM8_Init 1 */
 
@@ -12528,10 +11248,6 @@ static void MX_TIM8_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_IC_Init(&htim8) != HAL_OK)
-  {
-    Error_Handler();
-  }
   sSlaveConfig.SlaveMode = TIM_SLAVEMODE_EXTERNAL1;
   sSlaveConfig.InputTrigger = TIM_TS_ITR0;
   if (HAL_TIM_SlaveConfigSynchro(&htim8, &sSlaveConfig) != HAL_OK)
@@ -12542,19 +11258,6 @@ static void MX_TIM8_Init(void)
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim8, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICSelection = TIM_ICSELECTION_INDIRECTTI;
-  if (HAL_TIM_IC_ConfigChannel(&htim8, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -12641,15 +11344,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
-  /* DMA1_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA1_Stream7_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);
-  /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
   /* DMA2_Stream1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
@@ -12691,22 +11388,31 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOF, ISO_USB_PIN_Pin|SPI5_NSS4_Pin|SPI5_NSS3_Pin|SPI5_NSS2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOF, SPI5_NSS4_Pin|SPI5_NSS3_Pin|SPI5_NSS2_Pin|SPI5_NSS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, SPI2_NSS2_Pin|SPI2_NSS3_Pin|SPI2_NSS4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(ISO_USB_PIN_GPIO_Port, ISO_USB_PIN_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI4_NSS2_GPIO_Port, SPI4_NSS2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, SPI2_NSS2_Pin|SPI2_NSS3_Pin|SPI2_NSS4_Pin|SPI3_NSS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, SPI4_NSS3_Pin|SPI4_NSS4_Pin|ACC_SDO_SAO_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, SPI4_NSS_Pin|SPI4_NSS2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOG, SPI6_NSS4_Pin|SPI6_NSS3_Pin|SPI6_NSS2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, SPI4_NSS3_Pin|SPI4_NSS4_Pin|SPI2_NSS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, SPI3_NSS2_Pin|SPI3_NSS3_Pin|SPI3_NSS4_Pin|ADC1_SYNC_RESETT_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOG, SPI6_NSS4_Pin|SPI6_NSS3_Pin|SPI6_NSS2_Pin|SPI6_NSS_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, SPI3_NSS2_Pin|SPI3_NSS3_Pin|SPI3_NSS4_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ADC1_SYNC_RESET_GPIO_Port, ADC1_SYNC_RESET_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ACC_SDO_SAO_GPIO_Port, ACC_SDO_SAO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : ADC2_DRDY_Pin */
   GPIO_InitStruct.Pin = ADC2_DRDY_Pin;
@@ -12714,8 +11420,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ADC2_DRDY_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ISO_USB_PIN_Pin SPI5_NSS4_Pin SPI5_NSS3_Pin SPI5_NSS2_Pin */
-  GPIO_InitStruct.Pin = ISO_USB_PIN_Pin|SPI5_NSS4_Pin|SPI5_NSS3_Pin|SPI5_NSS2_Pin;
+  /*Configure GPIO pins : SPI5_NSS4_Pin SPI5_NSS3_Pin SPI5_NSS2_Pin SPI5_NSS_Pin */
+  GPIO_InitStruct.Pin = SPI5_NSS4_Pin|SPI5_NSS3_Pin|SPI5_NSS2_Pin|SPI5_NSS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -12727,18 +11433,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ADC3_DRDY_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SPI2_NSS2_Pin SPI2_NSS3_Pin SPI2_NSS4_Pin */
-  GPIO_InitStruct.Pin = SPI2_NSS2_Pin|SPI2_NSS3_Pin|SPI2_NSS4_Pin;
+  /*Configure GPIO pin : ISO_USB_PIN_Pin */
+  GPIO_InitStruct.Pin = ISO_USB_PIN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(ISO_USB_PIN_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : SPI2_NSS2_Pin SPI2_NSS3_Pin SPI2_NSS4_Pin SPI3_NSS_Pin */
+  GPIO_InitStruct.Pin = SPI2_NSS2_Pin|SPI2_NSS3_Pin|SPI2_NSS4_Pin|SPI3_NSS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ADC1_DRDY_Pin ACC_INT1_Pin */
-  GPIO_InitStruct.Pin = ADC1_DRDY_Pin|ACC_INT1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pin : ADC1_DRDY_Pin */
+  GPIO_InitStruct.Pin = ADC1_DRDY_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(ADC1_DRDY_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BOOT1_Pin */
   GPIO_InitStruct.Pin = BOOT1_Pin;
@@ -12746,15 +11459,15 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SPI4_NSS2_Pin */
-  GPIO_InitStruct.Pin = SPI4_NSS2_Pin;
+  /*Configure GPIO pins : SPI4_NSS_Pin SPI4_NSS2_Pin */
+  GPIO_InitStruct.Pin = SPI4_NSS_Pin|SPI4_NSS2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SPI4_NSS2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SPI4_NSS3_Pin SPI4_NSS4_Pin ACC_SDO_SAO_Pin */
-  GPIO_InitStruct.Pin = SPI4_NSS3_Pin|SPI4_NSS4_Pin|ACC_SDO_SAO_Pin;
+  /*Configure GPIO pins : SPI4_NSS3_Pin SPI4_NSS4_Pin SPI2_NSS_Pin ACC_SDO_SAO_Pin */
+  GPIO_InitStruct.Pin = SPI4_NSS3_Pin|SPI4_NSS4_Pin|SPI2_NSS_Pin|ACC_SDO_SAO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -12766,8 +11479,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ADC4_DRDY_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SPI6_NSS4_Pin SPI6_NSS3_Pin SPI6_NSS2_Pin */
-  GPIO_InitStruct.Pin = SPI6_NSS4_Pin|SPI6_NSS3_Pin|SPI6_NSS2_Pin;
+  /*Configure GPIO pins : SPI6_NSS4_Pin SPI6_NSS3_Pin SPI6_NSS2_Pin SPI6_NSS_Pin */
+  GPIO_InitStruct.Pin = SPI6_NSS4_Pin|SPI6_NSS3_Pin|SPI6_NSS2_Pin|SPI6_NSS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -12787,16 +11500,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF0_MCO;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SPI3_NSS2_Pin SPI3_NSS3_Pin SPI3_NSS4_Pin ADC1_SYNC_RESETT_Pin */
-  GPIO_InitStruct.Pin = SPI3_NSS2_Pin|SPI3_NSS3_Pin|SPI3_NSS4_Pin|ADC1_SYNC_RESETT_Pin;
+  /*Configure GPIO pins : SPI3_NSS2_Pin SPI3_NSS3_Pin SPI3_NSS4_Pin ADC1_SYNC_RESET_Pin */
+  GPIO_InitStruct.Pin = SPI3_NSS2_Pin|SPI3_NSS3_Pin|SPI3_NSS4_Pin|ADC1_SYNC_RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  /*Configure GPIO pin : ACC_INT1_Pin */
+  GPIO_InitStruct.Pin = ACC_INT1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ACC_INT1_GPIO_Port, &GPIO_InitStruct);
 
 }
 
@@ -12806,395 +11521,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   /* Prevent unused argument(s) compilation warning */
 //  if(GPIO_Pin==10)
-//    if(FREESMARTEEG_OUT & FREESMARTEEG_DATA_TEXT_UART7_INT)
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_DATA_READ_INT)
+  if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_ADS131M08_SPI_READ_INT)
   {
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-//	  __NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();__NOP();
-
-	  for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-	  {
-	//                print2_symbol('0');
-	    aTxBuffer[0]=0x80;
-	    aTxBuffer[1]=0x00;
-	//              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-	//              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-//	    print7_symbol('+');
-//	    if(HAL_SPI_Receive_DMA(&hspi3, datas[ad_adc], uint8_ad_number) != HAL_OK)
-//		    if(HAL_SPI_Receive_DMA(&hspi1, datas[ad_adc], uint8_ad_number) != HAL_OK)
-	//                print2_symbol('1');
-	//                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
-	//                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
-	//              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-	    {
-	      Error_Handler();
-	    }
-//	    print7_symbol('-');
-	  }
-
-//	    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//	    {
-//	      for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-//	      {
-//	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//
-//	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-//	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-//	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-//	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-//	        print7_symbol(';');
-//	      }
-//	      print7_symbol(';');
-//	    }
-//	    print7_symbol(';');
-//
-//	    print7_line();
-
-//	  dataBuffer_print7[0]=';';
-//	  int uint8_data_number=1;
-//	  if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer_print7, uint8_data_number) != HAL_OK)
-//	  {
-//	    Error_Handler();
-//	  }
-
-		SPI_RxCplt=1;
+	  flag_nDRDY_INTERRUPT = true;
   }
-
-//        print7_text_line(",");
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_INT_DMA)
-  {
-	    	SAI_RxCplt=1;
-  }
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_INT)
-  {
-
-//	  for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-	  {
-	//                print2_symbol('0');
-//	    aTxBuffer[0]=0x80;
-//	    aTxBuffer[1]=0x00;
-	//              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-	//              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-//	    print7_symbol('+');
-//      if(GPIO_Pin==0)
-	    if(SAI_DMA)
-	    {
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata.datas[0], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata.datas[1], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB1, ovdata.datas[2], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA2, ovdata.datas[3], SAI_DATASIZE_32);
-
-	    	if(SAI_DMA_INT_SHIFT)
-	    	{
-		    	SAI_RxStart=1;
-	    	}
-	    	else
-	    	{
-		    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-		    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-		    	HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-		    	HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-
-//	              while (HAL_SAI_GetState(&hsai_BlockB2) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
-//
-//	              while (HAL_SAI_GetState(&hsai_BlockA1) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
-//
-//	              while (HAL_SAI_GetState(&hsai_BlockB1) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
-//
-//	              while (HAL_SAI_GetState(&hsai_BlockA2) != HAL_SAI_STATE_READY)
-//	              {
-//	              }
-
-		    	SAI_RxStart=1;
-//		    	SAI_RxCplt=1;
-
-	    	}
-
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0+arrayshift], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1+arrayshift], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[2], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[3], SAI_DATASIZE_32);
-
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB4, datas[0], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA3, datas[1], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB4, &(datas[0][4]), SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA3, &(datas[1][4]), SAI_DATASIZE_32);
-
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB1, datas[2], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-//	    	SAI_RxCplt=1;
-	    } else {
-//	    	HAL_SAI_Receive(&hsai_BlockB2, datas[0], SAI_DATASIZE_32, 5000);
-//	    	HAL_SAI_Receive(&hsai_BlockA1, datas[1], SAI_DATASIZE_32, 5000);
-//	    	HAL_SAI_Receive(&hsai_BlockB1, datas[2], SAI_DATASIZE_32, 5000);
-//	    	HAL_SAI_Receive(&hsai_BlockA2, datas[3], SAI_DATASIZE_32, 5000);
-
-//	    	HAL_SAI_Receive(&hsai_BlockB1, datas[2], SAI_DATASIZE_32, 5000);
-//	    	HAL_SAI_Receive(&hsai_BlockA2, datas[3], SAI_DATASIZE_32, 5000);
-	    	SAI_RxCplt=1;
-	    }
-//      if(GPIO_Pin==1)
-	  {
-//          HAL_SAI_Receive_DMA(&hsai_BlockA1, datas[1], SAI_DATASIZE_32);
-	  }
-//      if(GPIO_Pin==2)
-//	  {
-//          HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[2], SAI_DATASIZE_32);
-//	  }
-//      if(GPIO_Pin==3)
-//	  {
-//          HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[3], SAI_DATASIZE_32);
-//	  }
-
-//        HAL_SAI_Receive_DMA(&hsai_BlockB2, datas[0], SAI_DATASIZE_32);
-//        HAL_SAI_Receive_DMA(&hsai_BlockA2, datas[2], SAI_DATASIZE_32);
-//                            aTxBuffer[0]=0x80;
-//                            aTxBuffer[1]=0x00;
-//                            HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, datasBuffer[0], 8*4);
-//                HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, datasBuffer[0], 8*4, 100);
-//	    print7_symbol('-');
-	  }
-
-
-  }
-
-//      if(GPIO_Pin==0)
-      {
-
-          if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER_CIPLV)
-          {
-//    	    	nSrc0++;
-//            	if(nSrc0==BLOCKSIZE)
-//            	{
-//            		nSrc0=0;
-//            	}
-
-  //	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata2s[0].datas[0], SAI_DATASIZE_32);
-  //	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata2s[1].datas[1], SAI_DATASIZE_32);
-
-    	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata4.datas[0], SAI_DATASIZE_32);
-//      	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata3.datas[0], SAI_DATASIZE_32);
-
-  	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata4.datas[1], SAI_DATASIZE_32);
-  	    	SAI_RxCplt=1;
-  //	    	ovdata2s[nSrc0].counter=ovdata.counter;
-
-  	    	ui8SampleNumber++;
-  	    	ovdata4.counter=ui8SampleNumber;
-//  	    	ovdata3.counter=ui8SampleNumber;
-
-//  	    	ovdata2s[0].counter=ui8SampleNumber;
-  //	    	ovdata2s[1].counter=ui8SampleNumber;
-//  	    	ovdata2s[nSrc0].counter=ui8SampleNumber;
-
-  //	    	nSrc0++;
-  //        	if(nSrc0==BLOCKSIZE)
-  //        	{
-  //        		nSrc0=0;
-  //        	}
-          }
-
-//        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT_FILTER)
-//        {
-//  	    	nSrc0++;
-//          	if(nSrc0==BLOCKSIZE)
-//          	{
-//          		nSrc0=0;
-//          	}
-//
-////	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata2s[0].datas[0], SAI_DATASIZE_32);
-////	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata2s[1].datas[1], SAI_DATASIZE_32);
-//	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata2s[nSrc0].datas[0], SAI_DATASIZE_32);
-////	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata2s[nSrc0].datas[1], SAI_DATASIZE_32);
-//	    	SAI_RxCplt=1;
-////	    	ovdata2s[nSrc0].counter=ovdata.counter;
-//
-//	    	ui8SampleNumber++;
-//	    	ovdata2s[0].counter=ui8SampleNumber;
-////	    	ovdata2s[1].counter=ui8SampleNumber;
-//	    	ovdata2s[nSrc0].counter=ui8SampleNumber;
-//
-////	    	nSrc0++;
-////        	if(nSrc0==BLOCKSIZE)
-////        	{
-////        		nSrc0=0;
-////        	}
-//        }
-
-  	      if((FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER_FILTER))
-  	      {
-//              HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[1])), (2*4*8+4+4+1));
-//              HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[0])), (2*4*8+4+4+1));
-
-//              HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&(ovdata2s[nSrc0])), (2*4*8+4+4+1));
-
-//  	    	nSrc0++;
-//          	if(nSrc0==BLOCKSIZE)
-//          	{
-//          		nSrc0=0;
-//          	}
-  	      }
-      }
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SAI_READ_TIMER_INT)
-        {
-
-	    	HAL_SAI_Receive_DMA(&hsai_BlockB2, ovdata.datas[0], SAI_DATASIZE_32);
-	    	HAL_SAI_Receive_DMA(&hsai_BlockA1, ovdata.datas[1], SAI_DATASIZE_32);
-	    	SAI_RxCplt=1;
-        }
-
-        if(FREESMARTEEG_OUT & FREESMARTEEG_SAI_OPENVIBE_FREEEEG32_CUSTOM_INT_TIMER)
-        {
-        	if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
-			{
-                HAL_UART_Transmit_DMA(&huart1, (uint8_t*)(&ovdata), 2*4*8+4+4+1);
-			}
-            if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_USBHS)
-            {
-                CDC_Transmit_HS((uint8_t*)(&ovdata), 2*4*8+4+4+1);
-            }
-        }
-
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_I2S_READ_INT)
-  {
-
-	  for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-	  {
-	//                print2_symbol('0');
-	    aTxBuffer[0]=0x80;
-	    aTxBuffer[1]=0x00;
-	//              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-	//              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-//	    print7_symbol('+');
-
-
-//        HAL_I2S_Receive_DMA(&hi2s1, datas[0], uint8_ad_number);
-
-
-//                            aTxBuffer[0]=0x80;
-//                            aTxBuffer[1]=0x00;
-//                            HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, datasBuffer[0], 8*4);
-//                HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, datasBuffer[0], 8*4, 100);
-//	    print7_symbol('-');
-	  }
-
-
-	  I2S_RxCplt=1;
-  }
-
-        if(FREESMARTEEG_ADC & FREESMARTEEG_ADC_SPI_READ_INT)
-        {
-//      	  for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-//      	  {
-//      	//                print2_symbol('0');
-//      	    aTxBuffer[0]=0x80;
-//      	    aTxBuffer[1]=0x00;
-//      	//              HAL_GPIO_WritePin(device->spi_dev.chip_select_port, device->spi_dev.chip_select_pin, GPIO_PIN_RESET);
-//      	//              if(HAL_SPI_TransmitReceive(&hspi1, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-//      //	    print7_symbol('+');
-////    	    if(HAL_SPI_Receive_DMA(&hspi2, datas[ad_adc], uint8_ad_number) != HAL_OK)
-////        	    if(HAL_SPI_Receive_DMA(&hspi1, datas[ad_adc], uint8_ad_number) != HAL_OK)
-//                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], uint8_ad_number) != HAL_OK)
-////            if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, aTxBuffer, datas[ad_adc], uint8_ad_number) != HAL_OK)
-//      	//                print2_symbol('1');
-//      	//                if(HAL_SPI_TransmitReceive_DMA(&hspi1, aTxBuffer, data1, uint8_ad_number) != HAL_OK)
-//      	//                if(HAL_SPI_Receive_DMA(&hspi1, data1, uint8_ad_number) != HAL_OK)
-//      	//              if(HAL_SPI_TransmitReceive(device->spi_dev.dev, aTxBuffer, data, uint8_ad_number, 5000) != HAL_OK)
-//      	    {
-//      	      Error_Handler();
-//      	    }
-//      //	    print7_symbol('-');
-//      	  }
-
-      //	    for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-      //	    {
-      //	      for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-      //	      {
-      //	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-      //	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-      //	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-      //	          print7_binary(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-      //
-      //	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 0], 8);//          print2_symbol(';');
-      //	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 1], 8);//          print2_symbol(';');
-      //	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 2], 8);//          print2_symbol(';');
-      //	//                      print7_hex(datas[ad_adc][ad_data_channel * 4 + 3], 8);//          print2_symbol(';');
-      //	        print7_symbol(';');
-      //	      }
-      //	      print7_symbol(';');
-      //	    }
-      //	    print7_symbol(';');
-      //
-      //	    print7_line();
-
-      //	  dataBuffer_print7[0]=';';
-      //	  int uint8_data_number=1;
-      //	  if(HAL_UART_Transmit_DMA(&huart7, (uint8_t*)dataBuffer_print7, uint8_data_number) != HAL_OK)
-      //	  {
-      //	    Error_Handler();
-      //	  }
-
-      		SPI_RxTxCplt=1;
-        }
 
 }
 
