@@ -163,7 +163,7 @@ uint16_t adcStartup(ads131m0x_dev *dev, bool reset)
     			| GAIN2_PGAGAIN4_1);
     }
 
-    if(1)
+    if(0)
     {
         writeSingleRegister(dev, GAIN1_ADDRESS, (GAIN1_DEFAULT
         		& ~GAIN1_PGAGAIN3_MASK
@@ -207,7 +207,7 @@ uint16_t adcStartup(ads131m0x_dev *dev, bool reset)
     			| GAIN2_PGAGAIN4_16);
     }
 
-    if(0)
+    if(1)
     {
         writeSingleRegister(dev, GAIN1_ADDRESS, (GAIN1_DEFAULT
         		& ~GAIN1_PGAGAIN3_MASK
@@ -264,7 +264,7 @@ uint16_t adcStartup(ads131m0x_dev *dev, bool reset)
 //		| CFG_GC_DLY_65536);
     }
 
-    if(1)
+    if(0)
     {
 //        writeSingleRegister(dev, THRSHLD_MSB_ADDRESS, (THRSHLD_MSB_DEFAULT
 //        		& ~THRSHLD_MSB_CD_TH_MSB_MASK)

@@ -351,9 +351,10 @@ typedef struct ADData24 {
     uint8_t b7;
 } ADData24;
 DMA_BUFFER ADData24 addata24;
-DMA_BUFFER ADData24 addata24s[4];
+DMA_BUFFER ADData24 addata24s[uint8_ad_adc_number];
+DMA_BUFFER ADData24 addata24sw[uint8_ad_adc_number];
 
-#define datasBuffersize (4)
+#define datasBuffersize (uint8_ad_adc_number)
 
 //#define dataBuffer110size (2 + uint8_ad_chan_number * (3) * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1)
 #define dataBuffer110size (2 + uint8_ad_chan_number * (1 + 3) * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1)
@@ -376,7 +377,7 @@ uint32_t ui32SampleNumber=-1;
 
 //const uint8_t uint8_data_number_print = 200;
 //const uint8_t uint8_data_number_print2 = 200;
-#define uint8_data_number_print  300
+#define uint8_data_number_print  1300
 #define uint8_data_number_print2  300
 #define uint8_data_number_print7  300
 DMA_BUFFER uint8_t dataBuffer_print2[uint8_data_number_print2];
@@ -3021,7 +3022,7 @@ int main(void)
 
 	  ads131m0x_dev *device5;
 	  ads131m0x_init_param init_param5 = init_param;
-      init_param5.spi_dev.dev = &hspi3;
+      init_param5.spi_dev.dev = &hspi5;
       init_param5.spi_dev.chip_select_port = SPI5_NSS2_GPIO_Port;
       init_param5.spi_dev.chip_select_pin = SPI5_NSS2_Pin;
       ads131m0x_setup(&device5, init_param5);
@@ -3030,7 +3031,7 @@ int main(void)
 
 	  ads131m0x_dev *device6;
 	  ads131m0x_init_param init_param6 = init_param;
-      init_param6.spi_dev.dev = &hspi3;
+      init_param6.spi_dev.dev = &hspi2;
       init_param6.spi_dev.chip_select_port = SPI2_NSS4_GPIO_Port;
       init_param6.spi_dev.chip_select_pin = SPI2_NSS4_Pin;
       ads131m0x_setup(&device6, init_param6);
@@ -3039,7 +3040,7 @@ int main(void)
 
 	  ads131m0x_dev *device7;
 	  ads131m0x_init_param init_param7 = init_param;
-      init_param7.spi_dev.dev = &hspi3;
+      init_param7.spi_dev.dev = &hspi4;
       init_param7.spi_dev.chip_select_port = SPI4_NSS2_GPIO_Port;
       init_param7.spi_dev.chip_select_pin = SPI4_NSS2_Pin;
       ads131m0x_setup(&device7, init_param7);
@@ -3057,7 +3058,7 @@ int main(void)
 
 	  ads131m0x_dev *device9;
 	  ads131m0x_init_param init_param9 = init_param;
-      init_param9.spi_dev.dev = &hspi3;
+      init_param9.spi_dev.dev = &hspi5;
       init_param9.spi_dev.chip_select_port = SPI5_NSS3_GPIO_Port;
       init_param9.spi_dev.chip_select_pin = SPI5_NSS3_Pin;
       ads131m0x_setup(&device9, init_param9);
@@ -3066,7 +3067,7 @@ int main(void)
 
 	  ads131m0x_dev *device10;
 	  ads131m0x_init_param init_param10 = init_param;
-      init_param10.spi_dev.dev = &hspi3;
+      init_param10.spi_dev.dev = &hspi2;
       init_param10.spi_dev.chip_select_port = SPI2_NSS3_GPIO_Port;
       init_param10.spi_dev.chip_select_pin = SPI2_NSS3_Pin;
       ads131m0x_setup(&device10, init_param10);
@@ -3075,7 +3076,7 @@ int main(void)
 
 	  ads131m0x_dev *device11;
 	  ads131m0x_init_param init_param11 = init_param;
-      init_param11.spi_dev.dev = &hspi3;
+      init_param11.spi_dev.dev = &hspi4;
       init_param11.spi_dev.chip_select_port = SPI4_NSS3_GPIO_Port;
       init_param11.spi_dev.chip_select_pin = SPI4_NSS3_Pin;
       ads131m0x_setup(&device11, init_param11);
@@ -3093,7 +3094,7 @@ int main(void)
 
 	  ads131m0x_dev *device13;
 	  ads131m0x_init_param init_param13 = init_param;
-      init_param13.spi_dev.dev = &hspi3;
+      init_param13.spi_dev.dev = &hspi5;
       init_param13.spi_dev.chip_select_port = SPI5_NSS4_GPIO_Port;
       init_param13.spi_dev.chip_select_pin = SPI5_NSS4_Pin;
       ads131m0x_setup(&device13, init_param13);
@@ -3102,7 +3103,7 @@ int main(void)
 
 	  ads131m0x_dev *device14;
 	  ads131m0x_init_param init_param14 = init_param;
-      init_param14.spi_dev.dev = &hspi3;
+      init_param14.spi_dev.dev = &hspi2;
       init_param14.spi_dev.chip_select_port = SPI2_NSS2_GPIO_Port;
       init_param14.spi_dev.chip_select_pin = SPI2_NSS2_Pin;
       ads131m0x_setup(&device14, init_param14);
@@ -3111,7 +3112,7 @@ int main(void)
 
 	  ads131m0x_dev *device15;
 	  ads131m0x_init_param init_param15 = init_param;
-      init_param15.spi_dev.dev = &hspi3;
+      init_param15.spi_dev.dev = &hspi4;
       init_param15.spi_dev.chip_select_port = SPI4_NSS4_GPIO_Port;
       init_param15.spi_dev.chip_select_pin = SPI4_NSS4_Pin;
       ads131m0x_setup(&device15, init_param15);
@@ -4107,6 +4108,9 @@ int main(void)
         	  addata24s[ad_adc].b0=0;
         	  addata24s[ad_adc].b1=0;
         	  addata24s[ad_adc].b2=0;
+        	  addata24sw[ad_adc].b0=0;
+        	  addata24sw[ad_adc].b1=0;
+        	  addata24sw[ad_adc].b2=0;
               for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
             {
                 datas[ad_adc][ad_data_channel * 4 + 0]=0;
@@ -4117,6 +4121,9 @@ int main(void)
             	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
             	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
             	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+            	  addata24sw[ad_adc].datas[ad_data_channel][0]=0;
+            	  addata24sw[ad_adc].datas[ad_data_channel][1]=0;
+            	  addata24sw[ad_adc].datas[ad_data_channel][2]=0;
 
             }
         	  addata24s[ad_adc].b3=0;
@@ -4124,6 +4131,11 @@ int main(void)
         	  addata24s[ad_adc].b5=0;
         	  addata24s[ad_adc].b6=0;
         	  addata24s[ad_adc].b7=0;
+        	  addata24sw[ad_adc].b3=0;
+        	  addata24sw[ad_adc].b4=0;
+        	  addata24sw[ad_adc].b5=0;
+        	  addata24sw[ad_adc].b6=0;
+        	  addata24sw[ad_adc].b7=0;
             while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
             {
             }
@@ -4134,13 +4146,13 @@ int main(void)
             if(SPI_DMA)
             {
 //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
                 {
                   Error_Handler();
                 }
             } else {
 //                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
-                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
                 {
                   Error_Handler();
                 }
