@@ -571,7 +571,8 @@ void InitSPI(spi_device *spi_dev)
 //! \return None.
 //
 //*****************************************************************************
-void spiSendReceiveArrays(spi_device *spi_dev, const uint8_t dataTx[], uint8_t dataRx[], const uint8_t byteLength)
+//void spiSendReceiveArrays(spi_device *spi_dev, const uint8_t dataTx[], uint8_t dataRx[], const uint8_t byteLength)
+void spiSendReceiveArrays(spi_device *spi_dev, uint8_t dataTx[], uint8_t dataRx[], const uint8_t byteLength)
 {
     /*  --- INSERT YOUR CODE HERE ---
      *

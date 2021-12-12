@@ -237,6 +237,7 @@ void Error_Handler(void);
 #define FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT (1LL<<6)
 #define FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT (1LL<<7)
 #define FREEEEG32_ADS131M08_SPI_TEST_REGISTERS_INT (1LL<<8)
+#define FREEEEG32_ADS131M08_SPI_SAMPLECOUNT_INT (1LL<<9)
 
 //#define FREEEEG32_OUT (0)
 
@@ -244,6 +245,7 @@ void Error_Handler(void);
 //#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_TEST_REGISTERS_INT
 //#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT
 #define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT
+//#define FREEEEG32_OUT FREEEEG32_ADS131M08_SPI_SAMPLECOUNT_INT
 
 //#define FREEEEG32_OUT FREEEEG32_SAI_SDCARD_TEXT_UART7_INT
 //#define FREEEEG32_OUT FREEEEG32_SAI_SDCARD_OPENVIBE_CUSTOM_INT
@@ -414,8 +416,8 @@ void Error_Handler(void);
 #define UART_DMA (1)
 //#define UART_DMA (0)
 
-//#define SPI_DMA (1)
-#define SPI_DMA (0)
+#define SPI_DMA (1)
+//#define SPI_DMA (0)
 
 #define SPI_NSS_SOFTWARE (1)
 //#define SPI_NSS_SOFTWARE (0)
@@ -429,6 +431,7 @@ void Error_Handler(void);
 //#define uint8_ad_adc_number (2)
 //#define uint8_ad_adc_number (3)
 //#define uint8_ad_adc_number (4)
+//#define uint8_ad_adc_number (8)
 #define uint8_ad_adc_number (16)
 //#define uint8_ad_chan_number (1)
 //#define uint8_ad_chan_number (2)

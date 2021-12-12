@@ -124,7 +124,8 @@ void    setCS(spi_device *spi_dev, const bool state);
 void    setSYNC_RESET(ads131m0x_dev *dev, const bool state);
 void    toggleSYNC(ads131m0x_dev *dev);
 void    toggleRESET(ads131m0x_dev *dev);
-void    spiSendReceiveArrays(spi_device *spi_dev, const uint8_t DataTx[], uint8_t DataRx[], const uint8_t byteLength);
+//void    spiSendReceiveArrays(spi_device *spi_dev, const uint8_t DataTx[], uint8_t DataRx[], const uint8_t byteLength);
+void    spiSendReceiveArrays(spi_device *spi_dev, uint8_t DataTx[], uint8_t DataRx[], const uint8_t byteLength);
 uint8_t spiSendReceiveByte(spi_device *spi_dev, const uint8_t dataTx);
 bool    waitForDRDYinterrupt(ads131m0x_dev *dev, const uint32_t timeout_ms, bool *flag_nDRDY_INTERRUPT);
 

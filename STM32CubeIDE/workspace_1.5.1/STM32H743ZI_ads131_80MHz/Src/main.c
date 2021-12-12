@@ -4028,6 +4028,11 @@ int main(void)
               print_symbol(';');
               print_symbol(';');
     //          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
+//              spiSendReceiveArrays(devices[ad_adc], 0);
+//              print_binary(clock, 16);
+//              print_symbol(';');
+//              print_symbol(';');
+//    //          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
             }
               print_line();
 
@@ -4057,114 +4062,210 @@ int main(void)
 //          for(int i = 0; i < 2; i ++)
       {
             	flag_nDRDY_INTERRUPT=false;
-//  		toggleRESET(devices[0]);
-//		toggleRESET(devices[1]);
-//		toggleRESET(devices[2]);
-//		toggleRESET(devices[3]);
-
-//          waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
-
-//          writeSingleRegister(dev, MODE_ADDRESS, MODE_DEFAULT);
 
 
-//          	SPI_RxCplt=0;
-
-//              int crc_pair_ok[uint8_ad_adc_number][4];
-
-
-//                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
-//                  print7_symbol(';');
-
-//          numFrameWords = 10;
-//          uint32_t spiDummyWord_out[numFrameWords];
-//          // Number of words in a full ADS131M08 SPI frame
-//          uint32_t spiDummyWord_in[numFrameWords] =
+////  		toggleRESET(devices[0]);
+////		toggleRESET(devices[1]);
+////		toggleRESET(devices[2]);
+////		toggleRESET(devices[3]);
+//
+////          waitForDRDYinterrupt(device1, 5000, &flag_nDRDY_INTERRUPT);
+//
+////          writeSingleRegister(dev, MODE_ADDRESS, MODE_DEFAULT);
+//
+//
+////          	SPI_RxCplt=0;
+//
+////              int crc_pair_ok[uint8_ad_adc_number][4];
+//
+//
+////                  print7_hex(ad_adc1, 32);//          print2_symbol(';');
+////                  print7_symbol(';');
+//
+////          numFrameWords = 10;
+////          uint32_t spiDummyWord_out[numFrameWords];
+////          // Number of words in a full ADS131M08 SPI frame
+////          uint32_t spiDummyWord_in[numFrameWords] =
+////          {
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000,
+////          0x00000000};
+////          // Dummy word frame to write ADC during ADC data reads
+//          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
 //          {
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000,
-//          0x00000000};
-//          // Dummy word frame to write ADC during ADC data reads
-          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
-          {
-//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-//              {
-//              }
-//              if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, spiDummyWord_in, spiDummyWord_out, numFrameWords*4,5000) != HAL_OK)
-//    //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
-//              {
-//                Error_Handler();
-//              }
-//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-//              {
-//              }
-
-        	  addata24s[ad_adc].b0=0;
-        	  addata24s[ad_adc].b1=0;
-        	  addata24s[ad_adc].b2=0;
-        	  addata24sw[ad_adc].b0=0;
-        	  addata24sw[ad_adc].b1=0;
-        	  addata24sw[ad_adc].b2=0;
-              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
-            {
-                datas[ad_adc][ad_data_channel * 4 + 0]=0;
-                datas[ad_adc][ad_data_channel * 4 + 1]=0;
-                datas[ad_adc][ad_data_channel * 4 + 2]=0;
-                datas[ad_adc][ad_data_channel * 4 + 3]=0;
-
-            	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
-            	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
-            	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
-            	  addata24sw[ad_adc].datas[ad_data_channel][0]=0;
-            	  addata24sw[ad_adc].datas[ad_data_channel][1]=0;
-            	  addata24sw[ad_adc].datas[ad_data_channel][2]=0;
-
-            }
-        	  addata24s[ad_adc].b3=0;
-        	  addata24s[ad_adc].b4=0;
-        	  addata24s[ad_adc].b5=0;
-        	  addata24s[ad_adc].b6=0;
-        	  addata24s[ad_adc].b7=0;
-        	  addata24sw[ad_adc].b3=0;
-        	  addata24sw[ad_adc].b4=0;
-        	  addata24sw[ad_adc].b5=0;
-        	  addata24sw[ad_adc].b6=0;
-        	  addata24sw[ad_adc].b7=0;
-            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-            {
-            }
-        	if(SPI_NSS_SOFTWARE)
-        	{
-        	    setCS(&devices[ad_adc]->spi_dev, LOW);
-        	}
-            if(SPI_DMA)
-            {
+////              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+////              {
+////              }
+////              if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, spiDummyWord_in, spiDummyWord_out, numFrameWords*4,5000) != HAL_OK)
+////    //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+////              {
+////                Error_Handler();
+////              }
+////              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+////              {
+////              }
+//
+//        	  addata24s[ad_adc].b0=0;
+//        	  addata24s[ad_adc].b1=0;
+//        	  addata24s[ad_adc].b2=0;
+//        	  addata24sw[ad_adc].b0=0;
+//        	  addata24sw[ad_adc].b1=0;
+//        	  addata24sw[ad_adc].b2=0;
+//              for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            {
+//                datas[ad_adc][ad_data_channel * 4 + 0]=0;
+//                datas[ad_adc][ad_data_channel * 4 + 1]=0;
+//                datas[ad_adc][ad_data_channel * 4 + 2]=0;
+//                datas[ad_adc][ad_data_channel * 4 + 3]=0;
+//
+//            	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
+//            	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
+//            	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+//            	  addata24sw[ad_adc].datas[ad_data_channel][0]=0;
+//            	  addata24sw[ad_adc].datas[ad_data_channel][1]=0;
+//            	  addata24sw[ad_adc].datas[ad_data_channel][2]=0;
+//
+//                  for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+//            	  {
+//                	  datas[ad_adc][ad_data_channel * 4 + 0] = 0;
+//                	  datas[ad_adc][ad_data_channel * 4 + 1] = 0;
+//                	  datas[ad_adc][ad_data_channel * 4 + 2] = 0;
+//                	  datas[ad_adc][ad_data_channel * 4 + 3] = 0;
+//            	  }
+//
+//            }
+//        	  addata24s[ad_adc].b3=0;
+//        	  addata24s[ad_adc].b4=0;
+//        	  addata24s[ad_adc].b5=0;
+//        	  addata24s[ad_adc].b6=0;
+//        	  addata24s[ad_adc].b7=0;
+//        	  addata24sw[ad_adc].b3=0;
+//        	  addata24sw[ad_adc].b4=0;
+//        	  addata24sw[ad_adc].b5=0;
+//        	  addata24sw[ad_adc].b6=0;
+//        	  addata24sw[ad_adc].b7=0;
+//
+////              int status = readSingleRegister(devices[ad_adc], STATUS_ADDRESS);
+////              print_binary(status, 16);
+////              print_symbol(';');
+////              print_symbol(';');
+////    //          print_hex(status, 8);          print_symbol(';');          print_symbol(';');
+//              spiSendReceiveArrays(&(devices[ad_adc]->spi_dev), (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4);
+////              spiSendReceiveArrays(&(devices[ad_adc]->spi_dev), datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4);
+//
+//           if (0)
+//           {
+//            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//            {
+//            }
+//        	if(SPI_NSS_SOFTWARE)
+//        	{
+//        	    setCS(&devices[ad_adc]->spi_dev, LOW);
+//        	}
+//            if(SPI_DMA)
+//            {
 //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
-                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+////                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+//                {
+//                  Error_Handler();
+//                }
+//            } else {
+////                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
+//                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+//                {
+//                  Error_Handler();
+//                }
+//            }
+//            	if(SPI_NSS_SOFTWARE)
+//            	{
+//            	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+//            	}
+//            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//            {
+//            }
+//           }
+//          }
+
+                for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
                 {
-                  Error_Handler();
+              	  addata24s[ad_adc].b0=0;
+              	  addata24s[ad_adc].b1=0;
+              	  addata24s[ad_adc].b2=0;
+                    for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+                  {
+                  	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
+                  	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
+                  	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+                  }
+              	  addata24s[ad_adc].b3=0;
+              	  addata24s[ad_adc].b4=0;
+              	  addata24s[ad_adc].b5=0;
+              	  addata24s[ad_adc].b6=0;
+              	  addata24s[ad_adc].b7=0;
+                	if(SPI_NSS_SOFTWARE)
+                	{
+
+                      for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+                      {
+                      	if(devices[ad_adc1]->spi_dev.dev==devices[ad_adc]->spi_dev.dev)
+                      	{
+                        	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+                        	    {
+                                  while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                                  {
+                                  }
+                          	    setCS(&devices[ad_adc1]->spi_dev, HIGH);
+                        	    }
+                      	}
+                      }
+
+                	    setCS(&devices[ad_adc]->spi_dev, LOW);
+                	}
+                    while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                    {
+                    }
+                    if(SPI_DMA)
+                    {
+        //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+                        if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+                        {
+                          Error_Handler();
+                        }
+                    } else {
+        //                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
+                        if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+                        {
+                          Error_Handler();
+                        }
+                    }
+      //              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+      //              {
+      //              }
+      //              	if(SPI_NSS_SOFTWARE)
+      //              	{
+      //              	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+      //              	}
                 }
-            } else {
-//                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
-                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24sw[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
-                {
-                  Error_Handler();
-                }
-            }
             	if(SPI_NSS_SOFTWARE)
             	{
-            	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+                  for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+                  {
+                	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+                	    {
+                          while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                          {
+                          }
+                  	    setCS(&devices[ad_adc1]->spi_dev, HIGH);
+                	    }
+                  }
             	}
-            while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-            {
-            }
-          }
 
 
 //              int ad_adc = 2;
@@ -4193,6 +4294,7 @@ int main(void)
                 	  print_hex(addata24s[ad_adc].datas[ad_data_channel][0], 8);//          print2_symbol(';');
                 	  print_hex(addata24s[ad_adc].datas[ad_data_channel][1], 8);//          print2_symbol(';');
                 	  print_hex(addata24s[ad_adc].datas[ad_data_channel][2], 8);//          print2_symbol(';');
+
 //              print_binary(addata24s[ad_adc].datas[ad_data_channel][0], 8);//          print2_symbol(';');
 //              print_binary(addata24s[ad_adc].datas[ad_data_channel][1], 8);//          print2_symbol(';');
 //              print_binary(addata24s[ad_adc].datas[ad_data_channel][2], 8);//          print2_symbol(';');
@@ -4218,6 +4320,97 @@ int main(void)
         print_line();
 
       }//FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_TEXT_UART1_INT
+
+      if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_SAMPLECOUNT_INT)
+//          if(readSingleRegister(devices[3], STATUS_ADDRESS)&STATUS_DRDY0_MASK==STATUS_DRDY0_NEW_DATA)
+//          if(SPI_RxCplt)
+          if(flag_nDRDY_INTERRUPT)
+//          for(int i = 0; i < 2; i ++)
+      {
+            	flag_nDRDY_INTERRUPT=false;
+
+                for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+                {
+              	  addata24s[ad_adc].b0=0;
+              	  addata24s[ad_adc].b1=0;
+              	  addata24s[ad_adc].b2=0;
+                    for(int ad_data_channel = 0; ad_data_channel < uint8_ad_chan_number; ad_data_channel ++)
+                  {
+                  	  addata24s[ad_adc].datas[ad_data_channel][0]=0;
+                  	  addata24s[ad_adc].datas[ad_data_channel][1]=0;
+                  	  addata24s[ad_adc].datas[ad_data_channel][2]=0;
+                  }
+              	  addata24s[ad_adc].b3=0;
+              	  addata24s[ad_adc].b4=0;
+              	  addata24s[ad_adc].b5=0;
+              	  addata24s[ad_adc].b6=0;
+              	  addata24s[ad_adc].b7=0;
+                	if(SPI_NSS_SOFTWARE)
+                	{
+
+                      for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+                      {
+                      	if(devices[ad_adc1]->spi_dev.dev==devices[ad_adc]->spi_dev.dev)
+                      	{
+                        	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+                        	    {
+                                  while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                                  {
+                                  }
+                          	      setCS(&devices[ad_adc1]->spi_dev, HIGH);
+                        	    }
+                      	}
+                      }
+
+                	    setCS(&devices[ad_adc]->spi_dev, LOW);
+                	}
+                    while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                    {
+                    }
+                    if(SPI_DMA)
+                    {
+        //                if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4) != HAL_OK)
+                        if(HAL_SPI_TransmitReceive_DMA(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4) != HAL_OK)
+                        {
+                          Error_Handler();
+                        }
+                    } else {
+        //                if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, datas[ad_adc], datas[ad_adc], uint8_ad_chan_number*4,5000) != HAL_OK)
+                        if(HAL_SPI_TransmitReceive(devices[ad_adc]->spi_dev.dev, (uint8_t*)(&addata24s[ad_adc]), (uint8_t*)(&addata24s[ad_adc]), uint8_ad_chan_number*4,5000) != HAL_OK)
+                        {
+                          Error_Handler();
+                        }
+                    }
+      //              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+      //              {
+      //              }
+      //              	if(SPI_NSS_SOFTWARE)
+      //              	{
+      //              	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+      //              	}
+                }
+            	if(SPI_NSS_SOFTWARE)
+            	{
+                  for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+                  {
+                	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+                	    {
+                          while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                          {
+                          }
+                  	      setCS(&devices[ad_adc1]->spi_dev, HIGH);
+                	    }
+                  }
+            	}
+
+            	        ui32SampleNumber++;
+            	        if(ui32SampleNumber%250==0)
+            	        {
+            	        	                      print_hex(ui32SampleNumber/250, 16);//          print2_symbol(';');
+            	        	            print_symbol(';');
+            	        }
+
+      }//FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_SAMPLECOUNT_INT
 
       if(FREEEEG32_OUT & FREEEEG32_ADS131M08_SPI_OPENVIBE_FREEEEG32_CUSTOM_INT)
 //            if(0)//openbci
@@ -4269,6 +4462,21 @@ int main(void)
         	  addata24s[ad_adc].b7=0;
           	if(SPI_NSS_SOFTWARE)
           	{
+
+                for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+                {
+                	if(devices[ad_adc1]->spi_dev.dev==devices[ad_adc]->spi_dev.dev)
+                	{
+                  	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+                  	    {
+                            while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                            {
+                            }
+                    	    setCS(&devices[ad_adc1]->spi_dev, HIGH);
+                  	    }
+                	}
+                }
+
           	    setCS(&devices[ad_adc]->spi_dev, LOW);
           	}
               while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
@@ -4288,14 +4496,27 @@ int main(void)
                     Error_Handler();
                   }
               }
-              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
-              {
-              }
-              	if(SPI_NSS_SOFTWARE)
-              	{
-              	    setCS(&devices[ad_adc]->spi_dev, HIGH);
-              	}
+//              while (HAL_SPI_GetState(devices[ad_adc]->spi_dev.dev) != HAL_SPI_STATE_READY)
+//              {
+//              }
+//              	if(SPI_NSS_SOFTWARE)
+//              	{
+//              	    setCS(&devices[ad_adc]->spi_dev, HIGH);
+//              	}
           }
+      	if(SPI_NSS_SOFTWARE)
+      	{
+            for(int ad_adc1 = 0; ad_adc1 < uint8_ad_adc_number; ad_adc1 ++)
+            {
+          	    if(getCS(&devices[ad_adc1]->spi_dev)==LOW)
+          	    {
+                    while (HAL_SPI_GetState(devices[ad_adc1]->spi_dev.dev) != HAL_SPI_STATE_READY)
+                    {
+                    }
+            	    setCS(&devices[ad_adc1]->spi_dev, HIGH);
+          	    }
+            }
+      	}
 
 //        ui32SampleNumber++;
         if(1)
@@ -4304,13 +4525,13 @@ int main(void)
         {
 //            const uint32_t uint8_data_number = 2 + 1 * 3 * 1 + 0 * 2 + 1;
 //              const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 1;
-            const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 1;
+            const uint32_t uint8_data_number = 2 + uint8_ad_chan_number * 3 * (uint8_ad_adc_number) + uint8_accel_chan_number * 2 + 1;
 //          uint8_t dataBuffer[uint8_data_number];
 
           dataBuffer_print[0] = 0xA0;
           dataBuffer_print[1] = ui8SampleNumber++;
 
-          for(int ad_adc = 0; ad_adc < uint8_ad_adc_number; ad_adc ++)
+          for(int ad_adc = 0; ad_adc < (uint8_ad_adc_number); ad_adc ++)
           {
 //              readData(devices[ad_adc], &DataStructs[ad_adc]);
 //          	  datas[ad_adc][ad_data_channel * 4 + 0]=&DataStructs[ad_adc].channel0;
@@ -4330,12 +4551,12 @@ int main(void)
           for(int accel_data_channel = 0; accel_data_channel < 0; accel_data_channel ++)
 //                for(int accel_data_channel = 0; accel_data_channel < uint8_accel_chan_number; accel_data_channel ++)
           {
-            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 0] = 0;
-            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + accel_data_channel * 2 + 1] = 0;
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * (uint8_ad_adc_number) + accel_data_channel * 2 + 0] = 0;
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * (uint8_ad_adc_number) + accel_data_channel * 2 + 1] = 0;
           }
 //          dataBuffer_print[2 + 1 * 3 * 1 + 0 * 2 + 0] = 0xC0;
 //            dataBuffer[2 + uint8_ad_chan_number * 3 * 4 + uint8_accel_chan_number * 2 + 0] = 0xC0;
-            dataBuffer_print[2 + uint8_ad_chan_number * 3 * uint8_ad_adc_number + uint8_accel_chan_number * 2 + 0] = 0xC0;
+            dataBuffer_print[2 + uint8_ad_chan_number * 3 * (uint8_ad_adc_number) + uint8_accel_chan_number * 2 + 0] = 0xC0;
 
                       if(FREESMARTEEG_SEND & FREESMARTEEG_SEND_UART1)
                       {
@@ -11295,7 +11516,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 921600;
+  huart1.Init.BaudRate = 1500000;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
